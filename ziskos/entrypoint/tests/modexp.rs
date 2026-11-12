@@ -2,7 +2,7 @@
 //! the one-limb (short) and multi-limb (long) modulus paths.
 
 use num_bigint::BigUint;
-use ziskos::zisklib::{modexp, U256};
+use ziskos::zisklib::{modexp, modexp_u64_c, U256};
 
 /// A splitmix64 stream, so the cases are the same on every run.
 struct Rng(u64);
@@ -105,4 +105,47 @@ fn modexp_matches_num_bigint_on_edge_cases() {
             }
         }
     }
+    // A multi-limb base whose running value reaches zero before the last exponent bit: the
+    // product must come back as one zero limb, not [0, 0], or the next squaring divides a zero
+    // with a leading zero limb and its honest hint fails.
+    check(&two_to(260), &BigUint::from(7u32), &two_to(300));
+}
+
+/// `modexp_u64_c(base, exp, modulus)` as the caller's `modulus.len()` words.
+fn modexp_words(base: &[u64], exp: &[u64], modulus: &[u64]) -> Vec<u64> {
+    let mut out = vec![u64::MAX; modulus.len()];
+    let written = unsafe {
+        modexp_u64_c(
+            base.as_ptr(),
+            base.len(),
+            exp.as_ptr(),
+            exp.len(),
+            modulus.as_ptr(),
+            modulus.len(),
+            out.as_mut_ptr(),
+        )
+    };
+    assert_eq!(written, modulus.len());
+    out
+}
+
+/// The C entry point takes operands as the caller has them, leading zero words included: their
+/// values decide the result, as if they had been given without them.
+#[test]
+fn modexp_u64_c_takes_zero_padded_operands() {
+    let padded = |words: &[u64], len: usize| {
+        let mut w = words.to_vec();
+        w.resize(len, 0);
+        w
+    };
+    // 10^2 mod 7, with the modulus, the base and the exponent padded.
+    assert_eq!(
+        modexp_words(&padded(&[10], 5), &padded(&[2], 3), &padded(&[7], 8)),
+        padded(&[2], 8)
+    );
+    // A zero modulus, however long, gives zero (EIP-198).
+    assert_eq!(modexp_words(&[3], &[2], &[0; 8]), vec![0; 8]);
+    // A zero-length base is zero, a zero-length exponent is zero.
+    assert_eq!(modexp_words(&[], &[5], &[7]), vec![0]);
+    assert_eq!(modexp_words(&[3], &[], &[7]), vec![1]);
 }

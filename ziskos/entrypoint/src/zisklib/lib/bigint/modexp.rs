@@ -344,14 +344,20 @@ pub unsafe extern "C" fn modexp_u64_c(
     // Pad the operands up to whole U256 limbs for the arithmetic. These are local
     // buffers: the caller's lengths keep their meaning, so the rounding cannot leak
     // into the size of the output region below.
-    let mut base_padded = vec![0u64; base_len.next_multiple_of(4)];
+    // At least one limb each, so that an empty base reads as zero.
+    let mut base_padded = vec![0u64; base_len.next_multiple_of(4).max(4)];
     let mut modulus_padded = vec![0u64; modulus_len.next_multiple_of(4)];
 
     base_padded[..base_len].copy_from_slice(base_flat);
     modulus_padded[..modulus_len].copy_from_slice(modulus_flat);
 
-    let base = U256::flat_to_slice(&base_padded);
-    let modulus = U256::flat_to_slice(&modulus_padded);
+    // `modexp` takes operands without leading zero limbs (it recognizes zero and one on the lowest
+    // limb only, and its division checks compare lengths first), which an FFI caller need not
+    // provide. Trimmed, zero-padded operands get the result their values call for, an all-zero
+    // modulus included (zero, as EIP-198 requires).
+    let base = trim_leading_zeros(U256::flat_to_slice(&base_padded), U256::is_zero);
+    let modulus = trim_leading_zeros(U256::flat_to_slice(&modulus_padded), U256::is_zero);
+    let exp: &[u64] = if exp.is_empty() { &[0] } else { trim_leading_zeros(exp, |w| *w == 0) };
 
     let result_u256 = modexp(
         base,
@@ -373,6 +379,12 @@ pub unsafe extern "C" fn modexp_u64_c(
     result[written..].fill(0);
 
     modulus_len
+}
+
+/// `limbs` (least significant first, at least one) without its leading zero limbs, keeping one.
+fn trim_leading_zeros<T>(limbs: &[T], is_zero: impl Fn(&T) -> bool) -> &[T] {
+    let len = limbs.iter().rposition(|l| !is_zero(l)).map_or(1, |top| top + 1);
+    &limbs[..len]
 }
 
 /// Convert big-endian bytes to little-endian u64 array
