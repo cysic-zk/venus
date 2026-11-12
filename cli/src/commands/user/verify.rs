@@ -1,7 +1,7 @@
 use anyhow::Result;
 use colored::Colorize;
 use zisk_build::ZISK_VERSION_MESSAGE;
-use zisk_common::{PlonkVkey, Proof};
+use zisk_common::{PlonkVkey, ProgramVK, Proof};
 use zisk_prover_backend::setup_logger;
 
 #[derive(clap::Args)]
@@ -32,6 +32,12 @@ pub(crate) struct VerifyCmd {
     /// `vadcop_final_compressed.verkey.json` for a compressed proof.
     #[clap(long = "leaf-setup-vk")]
     leaf_setup_vk: Option<String>,
+
+    /// Trusted program key (JSON array of 4 u64 limbs): the proof must attest to this program.
+    /// If omitted, it verifies for whichever program its publics commit to, which is printed:
+    /// a valid proof of another program verifies too.
+    #[clap(long = "program-vk")]
+    program_vk: Option<String>,
 
     /// Verbosity (-v, -vv)
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
@@ -87,7 +93,27 @@ impl VerifyCmd {
                 None => None,
             };
 
+        let trusted_program_vk: Option<ProgramVK> = match &self.program_vk {
+            Some(path) => {
+                let contents = std::fs::read_to_string(path).map_err(|e| {
+                    anyhow::anyhow!("Error reading program vkey from {}: {}", path, e)
+                })?;
+                let vk: Vec<u64> = serde_json::from_str(&contents).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Error parsing program vkey from {} (expected a JSON array of u64): {}",
+                        path,
+                        e
+                    )
+                })?;
+                Some(ProgramVK { vk, hash_mode: proof.program_vk.hash_mode })
+            }
+            None => None,
+        };
+
         let mut builder = proof.verify_builder();
+        if let Some(vk) = &trusted_program_vk {
+            builder = builder.with_program_vk(vk);
+        }
         if let Some(vkey) = &trusted_plonk_vk {
             builder = builder.with_plonk_vk(vkey);
         }
@@ -118,6 +144,22 @@ impl VerifyCmd {
         }
 
         tracing::info!("{}", "--- VERIFICATION SUMMARY ---".bright_green().bold());
+        if result.is_ok() {
+            // The statement that verified: a valid proof says nothing about which program ran
+            // unless its key is the one expected.
+            let program_vk = trusted_program_vk.clone().unwrap_or_else(|| proof.get_program_vk());
+            let pinned = if trusted_program_vk.is_some() { "pinned" } else { "NOT pinned" };
+            tracing::info!(
+                "   program: {} ({pinned})",
+                program_vk.vk.iter().map(|l| format!("{l:#018x}")).collect::<Vec<_>>().join(" ")
+            );
+            // The committed outputs (only the program key was overridden, if anything).
+            let publics = proof.publics();
+            let mut outputs = vec![0u8; zisk_verifier::ZISK_PUBLICS * 4];
+            publics.head();
+            publics.read_slice(&mut outputs);
+            tracing::info!("   outputs: 0x{}", hex::encode(&outputs));
+        }
         tracing::info!("      time: {} milliseconds", elapsed.as_millis());
         tracing::info!("{}", "----------------------------".bright_green().bold());
 
