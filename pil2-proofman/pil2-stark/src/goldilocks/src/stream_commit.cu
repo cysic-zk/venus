@@ -795,6 +795,12 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
 
     CHECKCUDAERR(cudaMemcpyAsync(hRoot, d_tree + treeElems - SC_DIGEST, SC_DIGEST * 8,
                                  cudaMemcpyDeviceToHost, stream));
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    // Block rather than spin until the root lands: under the default schedule the wait holds a core
+    // for the whole commit, and phase 1 runs many commits alongside its CPU-bound witnesses.
+    cudaEvent_t done;
+    CHECKCUDAERR(cudaEventCreateWithFlags(&done, cudaEventBlockingSync | cudaEventDisableTiming));
+    CHECKCUDAERR(cudaEventRecord(done, stream));
+    CHECKCUDAERR(cudaEventSynchronize(done));
+    CHECKCUDAERR(cudaEventDestroy(done));
     return 0;
 }
