@@ -166,7 +166,7 @@ void unregister_host_memory_gpu(void *ptr) {
 // trace H2D completes. The copy is no longer synced at copy time (see
 // copy_direct_registered_h2d_if_enabled), so the buffer must not be recycled before that or the
 // in-flight DMA reads reused bytes. Called from the buffer pool before reusing a shared trace
-// buffer. No-op if the stream has no outstanding commit (status != 2).
+// buffer; returns at once when the upload is done (or the stream never uploaded one).
 //
 // This waits on trace_copy_event, not end_event: the commit's LDE/Merkle work reads the device
 // copy, not the host buffer, so gating recycling on the whole commit held pool buffers for the
@@ -177,9 +177,12 @@ void wait_trace_h2d_done_gpu(void *d_buffers_, uint64_t streamId) {
     // Guard the C-ABI surface: an out-of-range streamId would index streamsData OOB and segfault.
     if (streamId >= d_buffers->n_total_streams) return;
     cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
-    if (d_buffers->streamsData[streamId].status == 2) {
-        CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].trace_copy_event));
-    }
+    // Unconditionally: in pipeline mode reserveStreamLocked hands a stream whose proof is still in
+    // flight to the next prover (status 1, no host sync), so the stream's status says nothing about
+    // whether this caller's upload has finished reading the buffer it is about to recycle. A later
+    // upload re-records the event behind this one on the same stream, so waiting on it is never
+    // too early; an event never recorded counts as complete.
+    CHECKCUDAERR(cudaEventSynchronize(d_buffers->streamsData[streamId].trace_copy_event));
 }
 
 void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
