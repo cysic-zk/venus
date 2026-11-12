@@ -56,6 +56,19 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
             pub const PACKED_BITS: usize = #packed_bits;
             pub const PACKED_WORDS: usize = #packed_words;
             #(#setter_getters)*
+
+            /// Updates one word of a field that straddles two: `*word = (*word & keep) | bits`.
+            ///
+            /// The access is volatile so that it stays a lone 8-byte load and store. Merged with
+            /// the other word into one 16-byte access, it partially overlaps the neighbouring
+            /// field's stores, which cannot be forwarded to it: every such load then waits for those
+            /// stores to retire, serializing a fill (Main's lanes) on its cache misses.
+            #[inline(always)]
+            fn straddle_store(word: &mut u64, keep: u64, bits: u64) {
+                let ptr: *mut u64 = word;
+                // SAFETY: `ptr` comes from a live `&mut u64`.
+                unsafe { ptr.write_volatile((ptr.read_volatile() & keep) | bits) }
+            }
         }
 
         impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
@@ -343,10 +356,11 @@ fn add_packed_array_setter_getter(
                 let high_bits: usize = #bit_width - low_bits;
                 let low_mask: u64 = ((1u128 << low_bits) - 1) as u64;
                 let high_mask: u64 = ((1u128 << high_bits) - 1) as u64;
-                self.packed[word] &= !(low_mask << bit_start);
-                self.packed[word] |= ((value as u64) & low_mask) << bit_start;
-                self.packed[word + 1] &= !high_mask;
-                self.packed[word + 1] |= ((value as u64) >> low_bits) & high_mask;
+                // One 8-byte access per word (see `straddle_store`).
+                let low = (value as u64) & low_mask;
+                let high = ((value as u64) >> low_bits) & high_mask;
+                Self::straddle_store(&mut self.packed[word], !(low_mask << bit_start), low << bit_start);
+                Self::straddle_store(&mut self.packed[word + 1], !high_mask, high);
             }
         }
 
@@ -484,10 +498,10 @@ fn emit_split_packed_accessor(
             );
             const LOW_MASK: u64 = #low_mask;
             const HIGH_MASK: u64 = #high_mask;
-            self.packed[#word_start] &= !(LOW_MASK << #bit_start);
-            self.packed[#word_start] |= ((value as u64) & LOW_MASK) << #bit_start;
-            self.packed[#word_end] &= !HIGH_MASK;
-            self.packed[#word_end] |= ((value as u64) >> #low_bits) & HIGH_MASK;
+            // One 8-byte access per word (see `straddle_store`).
+            Self::straddle_store(&mut self.packed[#word_start], !(LOW_MASK << #bit_start),
+                           ((value as u64) & LOW_MASK) << #bit_start);
+            Self::straddle_store(&mut self.packed[#word_end], !HIGH_MASK, ((value as u64) >> #low_bits) & HIGH_MASK);
         }
 
         #[inline(always)]
