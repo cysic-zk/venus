@@ -9,9 +9,10 @@ use ziskos::zisklib::{FCALL_INPUT_READY_ID, FCALL_RANDOM_SEED_ID};
 use crate::{
     frops_asm::{self, FropsCallSite, FropsOperand, FropsSpec},
     zisk_ops::ZiskOp,
-    ZiskInst, ZiskRom, EXTRA_PARAMS_ADDR, FLOAT_LIB_ROM_ADDR, FREE_INPUT_ADDR, INPUT_ADDR, M64,
-    REGS_IN_MAIN_TO, ROM_ADDR, ROM_ENTRY, SRC_C, SRC_IMM, SRC_IND, SRC_MEM, SRC_REG, SRC_STEP,
-    STORE_IND, STORE_MEM, STORE_NONE, STORE_REG, UART_ADDR, ZISKLIB_ROM_ADDR,
+    ZiskInst, ZiskRom, EXTRA_PARAMS_ADDR, FCALL_PARAMS_MAX_SIZE, FCALL_RESULT_MAX_SIZE,
+    FLOAT_LIB_ROM_ADDR, FREE_INPUT_ADDR, INPUT_ADDR, M64, RAM_ADDR, RAM_SIZE, REGS_IN_MAIN_TO,
+    ROM_ADDR, ROM_ENTRY, SRC_C, SRC_IMM, SRC_IND, SRC_MEM, SRC_REG, SRC_STEP, STORE_IND, STORE_MEM,
+    STORE_NONE, STORE_REG, UART_ADDR, ZISKLIB_ROM_ADDR,
 };
 use crate::{
     zisk_ops::blake2b_gap_is_provable, BLAKE2B_RD_CHAIN, BLAKE2B_ROUND_MASK, BLAKE2B_WR_CHAIN,
@@ -85,8 +86,8 @@ const _: () = {
 
 // Fcall params and result lengths
 // NOTE: if these parameters are update, review dma_constants.inc
-const FCALL_PARAMS_LENGTH: u64 = 386;
-const FCALL_RESULT_LENGTH: u64 = 8193;
+const FCALL_PARAMS_LENGTH: u64 = FCALL_PARAMS_MAX_SIZE as u64;
+const FCALL_RESULT_LENGTH: u64 = FCALL_RESULT_MAX_SIZE as u64;
 
 // Fcall context offsets of the different fields
 const FCALL_FUNCTION_ID: u64 = 0;
@@ -210,6 +211,38 @@ struct MopsPendingWrite {
 /// MEM_ERROR value (the trace's exit code) of a dynamic jump whose target holds no instruction.
 /// Above the signal numbers the emulator stores for a fault, and apart from halt's 1.
 const ASM_ERROR_INVALID_PC: u64 = 0x101;
+/// MEM_ERROR value of a guest load or store outside the guest's memory.
+const ASM_ERROR_INVALID_ADDRESS: u64 = 0x102;
+/// MEM_ERROR value of an fcall that would pass more parameters, or take more results, than the
+/// fcall context holds.
+const ASM_ERROR_FCALL_OVERFLOW: u64 = 0x103;
+
+/// End of the guest memory the generated code may touch: the emulator maps the guest regions at
+/// their guest addresses, so guest addresses are host pointers, and this bounds them.
+const GUEST_MEMORY_END: u64 = RAM_ADDR + RAM_SIZE;
+
+/// A guest memory access, which decides the span its bytes must lie in: reads anywhere from the
+/// input data to the end of RAM (input, ROM, RAM; the unmapped stack guard between ROM and RAM
+/// faults, which the emulator reports), writes in RAM only.
+#[derive(Clone, Copy, PartialEq)]
+enum GuestAccess {
+    Read,
+    Write,
+}
+
+impl GuestAccess {
+    fn first(self) -> u64 {
+        match self {
+            GuestAccess::Read => INPUT_ADDR,
+            GuestAccess::Write => RAM_ADDR,
+        }
+    }
+
+    /// Whether the `width` bytes at `address` lie in the span.
+    fn allows(self, address: u64, width: u64) -> bool {
+        address >= self.first() && address <= GUEST_MEMORY_END - width
+    }
+}
 
 /// Entries of each region of the dynamic-jump table that `append_branch_table` emits, counted
 /// from the region's base: one per 4-byte pc in the BIOS table (based at ROM_ENTRY), one per byte
@@ -724,6 +757,12 @@ impl ZiskRom2Asm {
         *code += ".comm MEM_BLAKE2B_CHAIN, 8, 8\n";
         *code += ".comm MEM_RSP, 8, 8\n";
         *code += ".comm MEM_FREE_INPUT, 8, 8\n";
+        // Bounds of the guest accesses (guest_range_check): too wide for an immediate.
+        *code += &format!("guest_write_first: .quad 0x{RAM_ADDR:x}\n");
+        *code += &format!("guest_end: .quad 0x{GUEST_MEMORY_END:x}\n");
+        for width in [1u64, 2, 4, 8] {
+            *code += &format!("guest_last_{width}: .quad 0x{:x}\n", GUEST_MEMORY_END - width);
+        }
         if ctx.precompile_results() {
             *code += ".comm MEM_PRECOMPILE_RESULTS_ADDRESS, 8, 8\n";
         }
@@ -1116,6 +1155,24 @@ impl ZiskRom2Asm {
             ctx.mem_error,
             ASM_ERROR_INVALID_PC,
             ctx.comment_str("error = invalid dynamic pc")
+        );
+        *code += "\tjmp emu_end\n\n";
+        // An fcall parameter or result past the fcall context's capacity or size.
+        *code += "fcall_overflow:\n";
+        *code += &format!(
+            "\tmov {}, 0x{:x} {}\n",
+            ctx.mem_error,
+            ASM_ERROR_FCALL_OVERFLOW,
+            ctx.comment_str("error = fcall overflow")
+        );
+        *code += "\tjmp emu_end\n\n";
+        // A guest load or store outside the guest's memory (guest_range_check).
+        *code += "guest_address_invalid:\n";
+        *code += &format!(
+            "\tmov {}, 0x{:x} {}\n",
+            ctx.mem_error,
+            ASM_ERROR_INVALID_ADDRESS,
+            ctx.comment_str("error = invalid guest address")
         );
         *code += "\tjmp emu_end\n\n";
 
@@ -1564,6 +1621,14 @@ impl ZiskRom2Asm {
                     ctx.address_is_constant = true;
                     ctx.address_constant_value = instruction.a_offset_imm0;
                 }
+                Self::guest_range_check(
+                    ctx,
+                    code,
+                    REG_ADDRESS,
+                    ctx.address_is_constant.then_some(ctx.address_constant_value),
+                    8,
+                    GuestAccess::Read,
+                );
 
                 // Read value from memory and store in the proper register: a or c
                 *code += &format!(
@@ -1718,6 +1783,14 @@ impl ZiskRom2Asm {
                         ctx.address_is_constant = true;
                         ctx.address_constant_value = instruction.b_offset_imm0;
                     }
+                    Self::guest_range_check(
+                        ctx,
+                        code,
+                        REG_ADDRESS,
+                        ctx.address_is_constant.then_some(ctx.address_constant_value),
+                        8,
+                        GuestAccess::Read,
+                    );
                 }
 
                 // Read value from memory and store in the proper register: b or c
@@ -1863,6 +1936,15 @@ impl ZiskRom2Asm {
                         ctx.comment_str("address += sp")
                     );
                 }
+                Self::guest_range_check(
+                    ctx,
+                    code,
+                    reg_address,
+                    (ctx.a.is_constant && instruction.b_use_sp_imm1 == 0)
+                        .then(|| ctx.a.constant_value.wrapping_add(instruction.b_offset_imm0)),
+                    instruction.ind_width,
+                    GuestAccess::Read,
+                );
 
                 // Read from memory and store in the proper register: b or c
                 match instruction.ind_width {
@@ -2236,6 +2318,14 @@ impl ZiskRom2Asm {
                     ctx.address_is_constant = true;
                     ctx.address_constant_value = instruction.store_offset as u64;
                 }
+                Self::guest_range_check(
+                    ctx,
+                    code,
+                    REG_ADDRESS,
+                    ctx.address_is_constant.then_some(ctx.address_constant_value),
+                    8,
+                    GuestAccess::Write,
+                );
 
                 // Generate mem reads
                 if ctx.minimal_trace() {
@@ -2337,6 +2427,14 @@ impl ZiskRom2Asm {
                         );
                     }
                 }
+                Self::guest_range_check(
+                    ctx,
+                    code,
+                    reg_address,
+                    ctx.address_is_constant.then_some(ctx.address_constant_value),
+                    instruction.ind_width,
+                    GuestAccess::Write,
+                );
 
                 // Generate mem_reads
                 if ctx.minimal_trace() {
@@ -5924,6 +6022,13 @@ impl ZiskRom2Asm {
                         ctx.comment_str("aux = params size")
                     );
                     *code += &format!(
+                        "\tcmp {}, 0x{:x} {}\n",
+                        REG_AUX,
+                        FCALL_PARAMS_LENGTH - 1,
+                        ctx.comment_str("params full?")
+                    );
+                    *code += "\tja fcall_overflow\n";
+                    *code += &format!(
                         "\tmov qword {}[{} + {}*8 + {}*8], {} {}\n",
                         ctx.ptr,
                         ctx.fcall_ctx,
@@ -5949,6 +6054,25 @@ impl ZiskRom2Asm {
                         FCALL_PARAMS_SIZE,
                         ctx.comment_str("aux = params size")
                     );
+                    let words = ctx.a.constant_value;
+                    *code += &format!(
+                        "\tcmp {}, 0x{:x} {}\n",
+                        REG_AUX,
+                        FCALL_PARAMS_LENGTH - words,
+                        ctx.comment_str("room for the params?")
+                    );
+                    *code += "\tja fcall_overflow\n";
+                    // The words come from guest memory at b: its first and last ones must be
+                    // guest memory (the span is contiguous).
+                    Self::guest_range_check(ctx, code, REG_C, None, 8, GuestAccess::Read);
+                    *code += &format!(
+                        "\tlea {}, [{} + 0x{:x}] {}\n",
+                        REG_VALUE,
+                        REG_C,
+                        (words - 1) * 8,
+                        ctx.comment_str("value = address of the last param")
+                    );
+                    Self::guest_range_check(ctx, code, REG_VALUE, None, 8, GuestAccess::Read);
                     for i in 0..ctx.a.constant_value {
                         *code += &format!(
                             "\tmov {}, qword {}[{} + {}*8] {}\n",
@@ -6095,6 +6219,17 @@ impl ZiskRom2Asm {
                     FCALL_RESULT_GOT,
                     ctx.comment_str("aux = ctx.result_got")
                 );
+                // Not past the results the fcall produced (opc_fcall_get's bound, one past the last
+                // one included): further on the context holds stale words and then host memory.
+                *code += &format!(
+                    "\tcmp {}, qword {}[{} + {}*8] {}\n",
+                    REG_AUX,
+                    ctx.ptr,
+                    ctx.fcall_ctx,
+                    FCALL_RESULT_SIZE,
+                    ctx.comment_str("got ? ctx.result_size")
+                );
+                *code += "\tja fcall_overflow\n";
                 *code += &format!(
                     "\tmov {}, qword {}[{} + {}*8 + {}*8] {}\n",
                     REG_VALUE,
@@ -6829,6 +6964,9 @@ impl ZiskRom2Asm {
                     );
                 }
 
+                Self::guest_dynamic_range_check(ctx, code, "rdi", "rdx", GuestAccess::Write);
+                Self::guest_dynamic_range_check(ctx, code, "rsi", "rdx", GuestAccess::Read);
+
                 assert_eq!(REG_MEM_READS_ADDRESS, "r12");
                 assert_eq!(REG_MEM_READS_SIZE, "r13");
 
@@ -6897,6 +7035,9 @@ impl ZiskRom2Asm {
                     );
                 }
 
+                Self::guest_dynamic_range_check(ctx, code, "rdi", "rdx", GuestAccess::Read);
+                Self::guest_dynamic_range_check(ctx, code, "rsi", "rdx", GuestAccess::Read);
+
                 assert_eq!(REG_MEM_READS_ADDRESS, "r12");
                 assert_eq!(REG_MEM_READS_SIZE, "r13");
 
@@ -6947,6 +7088,8 @@ impl ZiskRom2Asm {
                     ctx.b.string_value,
                     ctx.comment_str("rdx = b = count")
                 );
+
+                Self::guest_dynamic_range_check(ctx, code, "rdi", "rdx", GuestAccess::Write);
 
                 assert_eq!(REG_MEM_READS_ADDRESS, "r12");
                 assert_eq!(REG_MEM_READS_SIZE, "r13");
@@ -7000,6 +7143,7 @@ impl ZiskRom2Asm {
                     inst.jmp_offset1,
                     ctx.comment(format!("rsi = {}", inst.jmp_offset1))
                 );
+                Self::guest_dynamic_range_check(ctx, code, "rdi", "rsi", GuestAccess::Write);
                 assert_eq!(REG_MEM_READS_ADDRESS, "r12");
                 assert_eq!(REG_MEM_READS_SIZE, "r13");
 
@@ -7348,6 +7492,82 @@ impl ZiskRom2Asm {
                 }
             }
         }
+    }
+
+    /// Stops the execution with ASM_ERROR_INVALID_ADDRESS unless the `width` bytes at the guest
+    /// address in `address_reg` lie in the span of `access` (GuestAccess): guest addresses are
+    /// used as host pointers, so an unchecked one reaches any host memory. A constant address is
+    /// checked here; a dynamic one with two compares, leaving every register as it was.
+    fn guest_range_check(
+        ctx: &ZiskAsmContext,
+        code: &mut String,
+        address_reg: &str,
+        constant_address: Option<u64>,
+        width: u64,
+        access: GuestAccess,
+    ) {
+        match constant_address {
+            Some(address) if access.allows(address, width) => {}
+            Some(_) => {
+                *code += &format!(
+                    "\tjmp guest_address_invalid {}\n",
+                    ctx.comment_str("constant address outside the guest memory")
+                );
+            }
+            None => {
+                *code += &match access {
+                    GuestAccess::Read => format!("\tcmp {address_reg}, 0x{INPUT_ADDR:x}\n"),
+                    GuestAccess::Write => {
+                        format!("\tcmp {address_reg}, qword {}[guest_write_first]\n", ctx.ptr)
+                    }
+                };
+                *code += "\tjb guest_address_invalid\n";
+                *code += &format!(
+                    "\tcmp {address_reg}, qword {}[guest_last_{width}] {}\n",
+                    ctx.ptr,
+                    ctx.comment_str("address ? last start in the guest memory")
+                );
+                *code += "\tja guest_address_invalid\n";
+            }
+        }
+    }
+
+    /// Like `guest_range_check` for the `count_reg` bytes at `address_reg` (a DMA operand), using
+    /// REG_VALUE as scratch: a zero count touches no memory, and the count must fit between the
+    /// address and the end of the guest memory.
+    fn guest_dynamic_range_check(
+        ctx: &ZiskAsmContext,
+        code: &mut String,
+        address_reg: &str,
+        count_reg: &str,
+        access: GuestAccess,
+    ) {
+        let done = format!("pc_{:x}_{}_range_checked", ctx.pc, address_reg);
+        *code += &format!("\ttest {count_reg}, {count_reg}\n");
+        *code += &format!("\tjz {done}\n");
+        *code += &match access {
+            GuestAccess::Read => format!("\tcmp {address_reg}, 0x{INPUT_ADDR:x}\n"),
+            GuestAccess::Write => {
+                format!("\tcmp {address_reg}, qword {}[guest_write_first]\n", ctx.ptr)
+            }
+        };
+        *code += "\tjb guest_address_invalid\n";
+        *code += &format!(
+            "\tmov {}, qword {}[guest_end] {}\n",
+            REG_VALUE,
+            ctx.ptr,
+            ctx.comment_str("value = end of the guest memory")
+        );
+        *code += &format!(
+            "\tsub {}, {} {}\n",
+            REG_VALUE,
+            address_reg,
+            ctx.comment_str("value = bytes from address to the end")
+        );
+        *code += "\tjb guest_address_invalid\n";
+        *code += &format!("\tcmp {count_reg}, {REG_VALUE}\n");
+        *code += "\tja guest_address_invalid\n";
+        *code += &format!("{done}:\n");
     }
 
     fn jumpt_to_dynamic_pc(ctx: &mut ZiskAsmContext, code: &mut String) {
@@ -8596,6 +8816,15 @@ impl ZiskRom2Asm {
             REG_ADDRESS,
             ctx.comment_str("b = precompile_results[0]")
         );
+        // The size comes with the results stream: copying more than the context's result area
+        // holds would write past the fcall context.
+        *code += &format!(
+            "\tcmp {}, 0x{:x} {}\n",
+            REG_B,
+            FCALL_RESULT_LENGTH,
+            ctx.comment_str("b ? result capacity")
+        );
+        *code += "\tja fcall_overflow\n";
         *code += &format!(
             "\tmov [{} + {}*8], {} {}\n",
             reg_address,
