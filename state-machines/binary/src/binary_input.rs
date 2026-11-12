@@ -1,5 +1,5 @@
 use crate::LTU_DIV_OP;
-use zisk_common::{ExtOperationData, OperationBusData};
+use zisk_common::{A, B, OP};
 use zisk_core::zisk_ops::ZiskOp;
 
 pub struct BinaryInput {
@@ -14,15 +14,16 @@ impl BinaryInput {
         Self { op, a, b }
     }
 
-    pub fn from(data: &ExtOperationData<u64>) -> Self {
+    /// The input of an operation bus payload (`[op, op_type, a, b]`), read in place.
+    pub fn from(data: &[u64]) -> Self {
         // `Arith` tags the comparison it injects on every division so that it carries no FROPS
         // (see `LTU_DIV_OP`). It is a plain `LTU` to the air, and this is where the tag is spent:
         // nothing downstream of the input, in Rust or in the PIL, knows it existed.
-        let op = match OperationBusData::get_op(data) {
+        let op = match data[OP] as u8 {
             LTU_DIV_OP => ZiskOp::LTU,
             op => op,
         };
-        Self { op, a: OperationBusData::get_a(data), b: OperationBusData::get_b(data) }
+        Self { op, a: data[A], b: data[B] }
     }
 }
 

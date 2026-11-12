@@ -4,7 +4,7 @@ use crate::{
     add_family_kind, BinaryBasicFrops, BinaryCollectCursor, BinaryInput, ChunkCollect,
     CollectAction, ADD_KINDS, KIND_BASIC,
 };
-use zisk_common::{BusDevice, BusId, ExtOperationData, OperationBusData, A, B, OPERATION_BUS_ID};
+use zisk_common::{BusDevice, BusId, A, B, OP, OPERATION_BUS_ID};
 use zisk_core::frops::frops_multiplicity_from_asm;
 #[cfg(feature = "debug_frops")]
 use zisk_core::frops::{frops_check_claim_row, frops_check_enabled, FROPS_BINARY_BASIC_BASE};
@@ -62,7 +62,7 @@ impl<F: PrimeField64> BinaryAddCollector<F> {
         #[cfg(feature = "debug_frops")]
         let check_frops = frops_check_enabled();
         Self {
-            inputs: Vec::new(),
+            inputs: Vec::with_capacity(collect.total()),
             cursor: BinaryCollectCursor::new(collect),
             frops_table_id,
             publish_frops,
@@ -101,13 +101,10 @@ impl<F: PrimeField64> BinaryAddCollector<F> {
     pub fn process_data(&mut self, bus_id: &BusId, data: &[u64]) -> bool {
         debug_assert!(*bus_id == OPERATION_BUS_ID);
 
-        let op_data: ExtOperationData<u64> =
-            data.try_into().expect("Regular Metrics: Failed to convert data");
-
         // One classifier for the whole family, shared with the counter, so this air never collects
         // an operation the plan counted somewhere else. A basic kind is not this air's: only the
         // `Binary` airs prove those, and they are the ones that account for their frops too.
-        let op = OperationBusData::get_op(&op_data);
+        let op = data[OP] as u8;
         let kind = add_family_kind(op, data[A], data[B]);
         if kind == KIND_BASIC {
             return true;
@@ -137,7 +134,7 @@ impl<F: PrimeField64> BinaryAddCollector<F> {
                 true
             }
             CollectAction::Collect => {
-                self.inputs.push(BinaryInput::from(&op_data));
+                self.inputs.push(BinaryInput::from(data));
                 !self.cursor.is_done()
             }
         }

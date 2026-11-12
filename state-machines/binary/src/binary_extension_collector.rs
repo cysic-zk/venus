@@ -7,7 +7,7 @@ use crate::{
     KIND_EXT,
 };
 use zisk_common::{
-    BusDevice, BusId, ExtOperationData, OperationBusData, A, B, OP, OPERATION_BUS_ID,
+    BusDevice, BusId, A, B, OP, OPERATION_BUS_ID, OP_TYPE,
 };
 
 use pil2_std_lib::Std;
@@ -68,7 +68,7 @@ impl<F: PrimeField64> BinaryExtensionCollector<F> {
         #[cfg(feature = "debug_frops")]
         let check_frops = frops_check_enabled();
         Self {
-            inputs: Vec::new(),
+            inputs: Vec::with_capacity(collect.total()),
             cursor: BinaryCollectCursor::new(collect),
             frops_table_id,
             publish_frops,
@@ -107,10 +107,7 @@ impl<F: PrimeField64> BinaryExtensionCollector<F> {
     pub fn process_data(&mut self, bus_id: &BusId, data: &[u64]) -> bool {
         debug_assert!(*bus_id == OPERATION_BUS_ID);
 
-        let op_data: ExtOperationData<u64> =
-            data.try_into().expect("Regular Metrics: Failed to convert data");
-
-        if OperationBusData::get_op_type(&op_data) as u32 != ZiskOperationType::BinaryE as u32 {
+        if data[OP_TYPE] as u32 != ZiskOperationType::BinaryE as u32 {
             return true;
         }
 
@@ -141,7 +138,7 @@ impl<F: PrimeField64> BinaryExtensionCollector<F> {
                 true
             }
             CollectAction::Collect => {
-                self.inputs.push(BinaryInput::from(&op_data));
+                self.inputs.push(BinaryInput::from(data));
                 !self.cursor.is_done()
             }
         }

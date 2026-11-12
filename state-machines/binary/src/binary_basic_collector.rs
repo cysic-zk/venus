@@ -7,7 +7,7 @@ use crate::{
     CollectAction, ADD_KINDS,
 };
 use zisk_common::{
-    BusDevice, BusId, ExtOperationData, OperationBusData, A, B, OP, OPERATION_BUS_ID,
+    BusDevice, BusId, A, B, OP, OPERATION_BUS_ID, OP_TYPE,
 };
 use zisk_core::frops::frops_multiplicity_from_asm;
 #[cfg(feature = "debug_frops")]
@@ -68,7 +68,7 @@ impl<F: PrimeField64> BinaryBasicCollector<F> {
         let check_frops = frops_check_enabled();
 
         Self {
-            inputs: Vec::new(),
+            inputs: Vec::with_capacity(collect.total()),
             cursor: BinaryCollectCursor::new(collect),
             frops_table_id,
             publish_frops,
@@ -107,17 +107,14 @@ impl<F: PrimeField64> BinaryBasicCollector<F> {
     pub fn process_data(&mut self, bus_id: &BusId, data: &[u64]) -> bool {
         debug_assert!(*bus_id == OPERATION_BUS_ID);
 
-        let op_data: ExtOperationData<u64> =
-            data.try_into().expect("Regular Metrics: Failed to convert data");
-
         // Cheapest test first: every operation on the bus reaches here, and most are not this air's.
-        if OperationBusData::get_op_type(&op_data) as u32 != ZiskOperationType::Binary as u32 {
+        if data[OP_TYPE] as u32 != ZiskOperationType::Binary as u32 {
             return true;
         }
 
         // One classifier for the whole family, shared with the counter, so this air never collects
         // an operation the plan counted somewhere else.
-        let kind = add_family_kind(OperationBusData::get_op(&op_data), data[A], data[B]);
+        let kind = add_family_kind(data[OP] as u8, data[A], data[B]);
 
         // The table row is only needed to publish the multiplicity or to cross-check the
         // assembly's column. Otherwise all the cursor needs is whether the operation is a frequent
@@ -146,7 +143,7 @@ impl<F: PrimeField64> BinaryBasicCollector<F> {
                 true
             }
             CollectAction::Collect => {
-                self.inputs.push(BinaryInput::from(&op_data));
+                self.inputs.push(BinaryInput::from(data));
                 !self.cursor.is_done()
             }
         }

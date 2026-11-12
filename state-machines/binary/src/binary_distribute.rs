@@ -55,6 +55,13 @@ pub struct ChunkCollect<const K: usize> {
     pub force_execute_to_end: bool,
 }
 
+impl<const K: usize> ChunkCollect<K> {
+    /// Operations collected from the chunk, all kinds together.
+    pub fn total(&self) -> usize {
+        self.kinds.iter().map(|kind| kind.count as usize).sum()
+    }
+}
+
 impl<const K: usize> Default for ChunkCollect<K> {
     fn default() -> Self {
         Self { kinds: [KindCollect::default(); K], force_execute_to_end: false }
