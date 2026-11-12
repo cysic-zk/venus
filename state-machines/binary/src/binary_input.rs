@@ -23,7 +23,12 @@ impl BinaryInput {
             LTU_DIV_OP => ZiskOp::LTU,
             op => op,
         };
-        Self { op, a: data[A], b: data[B] }
+        // Two 8-byte loads: the emulator has just written the payload word by word, and a merged
+        // 16-byte load of `a` and `b` cannot be forwarded from those stores, so it would wait for
+        // them to retire and serialize the replay on every collected operation.
+        // SAFETY: in-bounds reads of initialized `u64`s (the indexing checks the bounds).
+        let (a, b) = unsafe { (std::ptr::read_volatile(&data[A]), std::ptr::read_volatile(&data[B])) };
+        Self { op, a, b }
     }
 }
 
