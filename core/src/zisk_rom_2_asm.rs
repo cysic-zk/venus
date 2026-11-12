@@ -211,6 +211,19 @@ struct MopsPendingWrite {
 /// MEM_ERROR value (the trace's exit code) of a dynamic jump whose target holds no instruction.
 /// Above the signal numbers the emulator stores for a fault, and apart from halt's 1.
 const ASM_ERROR_INVALID_PC: u64 = 0x101;
+/// Guest memory a precompile touches, in u64 words, which `confine_precompile` checks: the same
+/// shapes its minimal-trace reads and memory operations take.
+#[derive(Clone, Copy)]
+enum PrecompileMemory {
+    /// `words` read at rdi, then the result written over them.
+    InPlace { words: u64 },
+    /// `read_a` words read at rdi and `read_b` at rsi, then `write_a` written at rdi.
+    Ab { read_a: u64, read_b: u64, write_a: u64 },
+    /// `params` pointers at rdi: `params[i]` for `i < loads.len()` points to `loads[i]` words read,
+    /// `params[begin..=end]` to `write` words written.
+    Params { params: u64, loads: &'static [usize], begin: u64, end: u64, write: u64 },
+}
+
 /// MEM_ERROR value of a guest load or store outside the guest's memory.
 const ASM_ERROR_INVALID_ADDRESS: u64 = 0x102;
 /// MEM_ERROR value of an fcall that would pass more parameters, or take more results, than the
@@ -279,6 +292,8 @@ impl BranchTableExtents {
 pub struct ZiskAsmContext {
     /// Entries of each region of the dynamic-jump table, which bound its lookups.
     branch_table: BranchTableExtents,
+    /// Access widths whose `guest_last_<width>` bound the generated code compares against.
+    guest_widths: std::collections::BTreeSet<u64>,
     mops_pending_writes: Vec<MopsPendingWrite>,
     mem_mops_base: String,
     pc: u64,
@@ -760,9 +775,6 @@ impl ZiskRom2Asm {
         // Bounds of the guest accesses (guest_range_check): too wide for an immediate.
         *code += &format!("guest_write_first: .quad 0x{RAM_ADDR:x}\n");
         *code += &format!("guest_end: .quad 0x{GUEST_MEMORY_END:x}\n");
-        for width in [1u64, 2, 4, 8] {
-            *code += &format!("guest_last_{width}: .quad 0x{:x}\n", GUEST_MEMORY_END - width);
-        }
         if ctx.precompile_results() {
             *code += ".comm MEM_PRECOMPILE_RESULTS_ADDRESS, 8, 8\n";
         }
@@ -1280,6 +1292,12 @@ impl ZiskRom2Asm {
         /*****************/
 
         Self::append_branch_table(rom, code);
+
+        // The last start address of each access width the code checks (guest_range_check).
+        *code += "\n.section .data\n.align 8\n";
+        for width in &ctx.guest_widths {
+            *code += &format!("guest_last_{width}: .quad 0x{:x}\n", GUEST_MEMORY_END - width);
+        }
 
         #[cfg(debug_assertions)]
         {
@@ -5319,6 +5337,8 @@ impl ZiskRom2Asm {
                 );
 
                 // Copy read data into mem_reads_address and advance it
+                Self::confine_precompile(ctx, code, PrecompileMemory::InPlace { words: 25 });
+
                 if ctx.minimal_trace() {
                     *code += &format!("\tmov {REG_ADDRESS}, rdi\n");
                     for k in 0..25 {
@@ -5390,6 +5410,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = input address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 4, read_b: 8, write_a: 4 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 4, 8);
@@ -5456,6 +5482,12 @@ impl ZiskRom2Asm {
                 let rd_chain = inst.jmp_offset1 as u64 & BLAKE2B_RD_CHAIN != 0;
                 let wr_chain = inst.jmp_offset1 as u64 & BLAKE2B_WR_CHAIN != 0;
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 16, read_b: 16, write_a: 16 },
+                );
+
                 // Save data into mem_reads: the index first, then the state and the input
                 if ctx.minimal_trace() {
                     let logged = format!("pc_{:x}_blake2b_chain_cached", ctx.pc);
@@ -5518,6 +5550,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = input address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 8, 8);
@@ -5562,6 +5600,12 @@ impl ZiskRom2Asm {
                     "\tmov rsi, {} {}\n",
                     ctx.b.string_value,
                     ctx.comment_str("rsi = b = input address")
+                );
+
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
                 );
 
                 // Save data into mem_reads
@@ -5611,6 +5655,8 @@ impl ZiskRom2Asm {
                 );
 
                 // Copy read data into mem_reads_address and advance it
+                Self::confine_precompile(ctx, code, PrecompileMemory::InPlace { words });
+
                 if ctx.minimal_trace() {
                     *code += &format!("\tmov {REG_ADDRESS}, rdi\n");
                     for k in 0..words {
@@ -5684,6 +5730,18 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rdi = b = address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Params {
+                        params: 5,
+                        loads: &[4, 4, 4],
+                        begin: 3,
+                        end: 4,
+                        write: 4,
+                    },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_mem_reads(ctx, code, 5, &[4, 4, 4]);
@@ -5726,6 +5784,18 @@ impl ZiskRom2Asm {
                     "\tmov rdi, {} {}\n",
                     ctx.b.string_value,
                     ctx.comment_str("rdi = b = address")
+                );
+
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Params {
+                        params: 5,
+                        loads: &[4, 4, 4, 4],
+                        begin: 4,
+                        end: 4,
+                        write: 4,
+                    },
                 );
 
                 // Save data into mem_reads
@@ -5800,6 +5870,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 8, 8);
@@ -5841,6 +5917,8 @@ impl ZiskRom2Asm {
                 );
 
                 // Copy read data into mem_reads
+                Self::confine_precompile(ctx, code, PrecompileMemory::InPlace { words: 8 });
+
                 if ctx.minimal_trace() {
                     *code += &format!("\tmov {REG_ADDRESS}, rdi\n");
                     for k in 0..8 {
@@ -5910,6 +5988,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 8, 8);
@@ -5951,6 +6035,8 @@ impl ZiskRom2Asm {
                 );
 
                 // Copy read data into mem_reads
+                Self::confine_precompile(ctx, code, PrecompileMemory::InPlace { words: 8 });
+
                 if ctx.minimal_trace() {
                     *code += &format!("\tmov {REG_ADDRESS}, rdi\n");
                     for k in 0..8 {
@@ -6271,6 +6357,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 8, 8);
@@ -6312,6 +6404,8 @@ impl ZiskRom2Asm {
                 );
 
                 // Copy read data into mem_reads
+                Self::confine_precompile(ctx, code, PrecompileMemory::InPlace { words: 8 });
+
                 if ctx.minimal_trace() {
                     *code += &format!("\tmov {REG_ADDRESS}, rdi\n");
                     for k in 0..8 {
@@ -6381,6 +6475,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 8, 8);
@@ -6426,6 +6526,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 8, 8);
@@ -6469,6 +6575,12 @@ impl ZiskRom2Asm {
                     "\tmov rsi, {} {}\n",
                     ctx.b.string_value,
                     ctx.comment_str("rsi = b = second operand address")
+                );
+
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
                 );
 
                 // Save data into mem_reads
@@ -6520,6 +6632,18 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rdi = b = address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Params {
+                        params: 5,
+                        loads: &[6, 6, 6, 6],
+                        begin: 4,
+                        end: 4,
+                        write: 6,
+                    },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_mem_reads(ctx, code, 5, &[6, 6, 6, 6]);
@@ -6566,6 +6690,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 12, read_b: 12, write_a: 12 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 12, 12);
@@ -6607,6 +6737,8 @@ impl ZiskRom2Asm {
                 );
 
                 // Copy read data into mem_reads
+                Self::confine_precompile(ctx, code, PrecompileMemory::InPlace { words: 12 });
+
                 if ctx.minimal_trace() {
                     *code += &format!("\tmov {REG_ADDRESS}, rdi\n");
                     for k in 0..12 {
@@ -6676,6 +6808,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 12, read_b: 12, write_a: 12 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 12, 12);
@@ -6719,6 +6857,12 @@ impl ZiskRom2Asm {
                     "\tmov rsi, {} {}\n",
                     ctx.b.string_value,
                     ctx.comment_str("rsi = b = second operand address")
+                );
+
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 12, read_b: 12, write_a: 12 },
                 );
 
                 // Save data into mem_reads
@@ -6766,6 +6910,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 12, read_b: 12, write_a: 12 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 12, 12);
@@ -6804,6 +6954,18 @@ impl ZiskRom2Asm {
                     "\tmov rdi, {} {}\n",
                     ctx.b.string_value,
                     ctx.comment_str("rdi = b = address")
+                );
+
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Params {
+                        params: 4,
+                        loads: &[4, 4],
+                        begin: 3,
+                        end: 3,
+                        write: 4,
+                    },
                 );
 
                 // Save data into mem_reads
@@ -6858,6 +7020,12 @@ impl ZiskRom2Asm {
                     ctx.comment_str("rsi = b = second operand address")
                 );
 
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
+                );
+
                 // Save data into mem_reads
                 if ctx.minimal_trace() {
                     Self::precompiled_save_ab_mem_reads(ctx, code, 8, 8);
@@ -6901,6 +7069,12 @@ impl ZiskRom2Asm {
                     "\tmov rsi, {} {}\n",
                     ctx.b.string_value,
                     ctx.comment_str("rsi = b = second operand address")
+                );
+
+                Self::confine_precompile(
+                    ctx,
+                    code,
+                    PrecompileMemory::Ab { read_a: 8, read_b: 8, write_a: 8 },
                 );
 
                 // Save data into mem_reads
@@ -7499,7 +7673,7 @@ impl ZiskRom2Asm {
     /// used as host pointers, so an unchecked one reaches any host memory. A constant address is
     /// checked here; a dynamic one with two compares, leaving every register as it was.
     fn guest_range_check(
-        ctx: &ZiskAsmContext,
+        ctx: &mut ZiskAsmContext,
         code: &mut String,
         address_reg: &str,
         constant_address: Option<u64>,
@@ -7515,6 +7689,7 @@ impl ZiskRom2Asm {
                 );
             }
             None => {
+                ctx.guest_widths.insert(width);
                 *code += &match access {
                     GuestAccess::Read => format!("\tcmp {address_reg}, 0x{INPUT_ADDR:x}\n"),
                     GuestAccess::Write => {
@@ -7528,6 +7703,39 @@ impl ZiskRom2Asm {
                     ctx.comment_str("address ? last start in the guest memory")
                 );
                 *code += "\tja guest_address_invalid\n";
+            }
+        }
+    }
+
+    /// Confines the guest memory a precompile reads and writes through rdi (and rsi) before any of
+    /// it is touched, by the trace, the memory operations, the results or the host routine.
+    fn confine_precompile(ctx: &mut ZiskAsmContext, code: &mut String, memory: PrecompileMemory) {
+        match memory {
+            PrecompileMemory::InPlace { words } => {
+                Self::guest_range_check(ctx, code, "rdi", None, words * 8, GuestAccess::Write);
+            }
+            PrecompileMemory::Ab { read_a, read_b, write_a } => {
+                let a_words = read_a.max(write_a);
+                let a_access = if write_a > 0 { GuestAccess::Write } else { GuestAccess::Read };
+                Self::guest_range_check(ctx, code, "rdi", None, a_words * 8, a_access);
+                Self::guest_range_check(ctx, code, "rsi", None, read_b * 8, GuestAccess::Read);
+            }
+            PrecompileMemory::Params { params, loads, begin, end, write } => {
+                Self::guest_range_check(ctx, code, "rdi", None, params * 8, GuestAccess::Read);
+                let operands = loads
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &words)| (i as u64, words as u64, GuestAccess::Read))
+                    .chain((begin..=end).map(|i| (i, write, GuestAccess::Write)));
+                for (index, words, access) in operands {
+                    *code += &format!(
+                        "\tmov {}, [rdi + {}*8] {}\n",
+                        REG_VALUE,
+                        index,
+                        ctx.comment(format!("value = param {index}"))
+                    );
+                    Self::guest_range_check(ctx, code, REG_VALUE, None, words * 8, access);
+                }
             }
         }
     }
