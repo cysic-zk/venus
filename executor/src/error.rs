@@ -19,6 +19,16 @@ pub enum ExecutorError {
         expected: usize,
     },
 
+    /// A `PubOut` of the guest named a public input the publics do not have (its index comes from
+    /// the guest's `a` operand).
+    #[error("public output index {index} is past the {count} public inputs")]
+    PublicOutputIndex {
+        /// The index the guest wrote to.
+        index: u64,
+        /// Public inputs the publics hold.
+        count: usize,
+    },
+
     /// The `global_id` referenced by the chunk's plan is missing from the supplied `instances` map.
     #[error("instance not found for global_id={global_id}")]
     InstanceNotFound {
