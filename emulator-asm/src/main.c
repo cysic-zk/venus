@@ -326,7 +326,8 @@ void tcp_server (void)
 
     struct sockaddr_in address;
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY; // Listen on all interfaces
+    // Loopback only: the services take requests from the local worker and authenticate nobody.
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(port);
 
     // Bind socket to port
