@@ -207,8 +207,45 @@ struct MopsPendingWrite {
     words: u64,
 }
 
+/// MEM_ERROR value (the trace's exit code) of a dynamic jump whose target holds no instruction.
+/// Above the signal numbers the emulator stores for a fault, and apart from halt's 1.
+const ASM_ERROR_INVALID_PC: u64 = 0x101;
+
+/// Entries of each region of the dynamic-jump table that `append_branch_table` emits, counted
+/// from the region's base: one per 4-byte pc in the BIOS table (based at ROM_ENTRY), one per byte
+/// address in the program (ROM_ADDR), ZisK library (ZISKLIB_ROM_ADDR) and float library
+/// (FLOAT_LIB_ROM_ADDR) tables. A lookup past its region would read past the table and jump to
+/// whatever host address it found there.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct BranchTableExtents {
+    bios: u64,
+    program: u64,
+    library: u64,
+    float: u64,
+}
+
+impl BranchTableExtents {
+    fn of(rom: &ZiskRom) -> Self {
+        let mut extents = Self::default();
+        for &pc in rom.sorted_pc_list.iter().filter(|pc| *pc & 1 == 0) {
+            if pc < ROM_ADDR {
+                extents.bios = extents.bios.max((pc - ROM_ENTRY) / 4 + 1);
+            } else if (ZISKLIB_ROM_ADDR..FLOAT_LIB_ROM_ADDR).contains(&pc) {
+                extents.library = extents.library.max(pc - ZISKLIB_ROM_ADDR + 1);
+            } else if pc >= FLOAT_LIB_ROM_ADDR {
+                extents.float = extents.float.max(pc - FLOAT_LIB_ROM_ADDR + 1);
+            } else {
+                extents.program = extents.program.max(pc - ROM_ADDR + 1);
+            }
+        }
+        extents
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct ZiskAsmContext {
+    /// Entries of each region of the dynamic-jump table, which bound its lookups.
+    branch_table: BranchTableExtents,
     mops_pending_writes: Vec<MopsPendingWrite>,
     mem_mops_base: String,
     pc: u64,
@@ -645,6 +682,7 @@ impl ZiskRom2Asm {
             ..Default::default()
         };
 
+        ctx.branch_table = BranchTableExtents::of(rom);
         ctx.ptr = "ptr ".to_string();
         ctx.mem_step = format!("qword {}[MEM_STEP]", ctx.ptr);
         ctx.mem_sp = format!("qword {}[MEM_SP]", ctx.ptr);
@@ -1070,6 +1108,17 @@ impl ZiskRom2Asm {
         Self::pop_internal_registers(&mut ctx, code, false);
         *code += "\n";
 
+        // A dynamic jump to a pc that holds no instruction (a table gap, or past a table) stops the
+        // execution with an error instead of jumping wherever the table index points.
+        *code += "dynamic_pc_invalid:\n";
+        *code += &format!(
+            "\tmov {}, 0x{:x} {}\n",
+            ctx.mem_error,
+            ASM_ERROR_INVALID_PC,
+            ctx.comment_str("error = invalid dynamic pc")
+        );
+        *code += "\tjmp emu_end\n\n";
+
         *code += "emu_end:\n";
 
         // Update step memory variable with the content of the step register, to make it accessible
@@ -1225,8 +1274,9 @@ impl ZiskRom2Asm {
     }
 
     /// Emit the `map_pc_*` dynamic-jump branch table: one `.quad pc_<addr>` per mapped ROM
-    /// address, with the gaps between consecutive addresses padded by `.quad emu_end` so an
-    /// indirect jump can index the table by `pc - base`.
+    /// address, with the gaps between consecutive addresses padded by `.quad dynamic_pc_invalid`
+    /// (which fails closed) so an indirect jump can index the table by `pc - base`. The extent
+    /// of each region is `BranchTableExtents::of`, which bounds those indexes.
     ///
     /// Reads only `rom.min_program_pc` and `rom.sorted_pc_list`; kept as a standalone function
     /// so its address-window handling (float and ZisK-library exclusions) can be unit-tested
@@ -1273,7 +1323,7 @@ impl ZiskRom2Asm {
             // The reserved ZisK library window [ZISKLIB_ROM_ADDR, FLOAT_LIB_ROM_ADDR) gets a
             // table of its own (below), based at ZISKLIB_ROM_ADDR: mapping it here would fill
             // the large ROM gap between the guest program and the library with one
-            // `.quad emu_end` per address (tens of millions of entries).
+            // `.quad dynamic_pc_invalid` per address (tens of millions of entries).
             if (ZISKLIB_ROM_ADDR..FLOAT_LIB_ROM_ADDR).contains(key) {
                 continue;
             }
@@ -1284,9 +1334,9 @@ impl ZiskRom2Asm {
                 && (*key > ROM_ADDR)
                 && (*key != (previous_key + 1) && (*key != FLOAT_LIB_ROM_ADDR))
             {
-                *code += &format!("map_pc_{ROM_ADDR:x}: \t.quad emu_end\n");
+                *code += &format!("map_pc_{ROM_ADDR:x}: \t.quad dynamic_pc_invalid\n");
                 for _ in ROM_ADDR + 1..*key {
-                    *code += "\t.quad emu_end\n";
+                    *code += "\t.quad dynamic_pc_invalid\n";
                 }
             }
 
@@ -1298,7 +1348,7 @@ impl ZiskRom2Asm {
                 && (*key != (previous_key + 1) && (*key != FLOAT_LIB_ROM_ADDR))
             {
                 for _ in previous_key + 1..*key {
-                    *code += "\t.quad emu_end\n";
+                    *code += "\t.quad dynamic_pc_invalid\n";
                 }
             }
 
@@ -1320,14 +1370,14 @@ impl ZiskRom2Asm {
             // Pad from the table base (first entry) or from the previous entry.
             let pad_from = match previous_key {
                 None if key > ZISKLIB_ROM_ADDR => {
-                    *code += &format!("map_pc_{ZISKLIB_ROM_ADDR:x}: \t.quad emu_end\n");
+                    *code += &format!("map_pc_{ZISKLIB_ROM_ADDR:x}: \t.quad dynamic_pc_invalid\n");
                     ZISKLIB_ROM_ADDR + 1
                 }
                 None => key,
                 Some(previous_key) => previous_key + 1,
             };
             for _ in pad_from..key {
-                *code += "\t.quad emu_end\n";
+                *code += "\t.quad dynamic_pc_invalid\n";
             }
             *code += &format!("map_pc_{key:x}: \t.quad pc_{key:x}\n");
             previous_key = Some(key);
@@ -7321,6 +7371,15 @@ impl ZiskRom2Asm {
                 REG_ADDRESS,
                 ctx.comment_str("pc -= ZISKLIB_ROM_ADDR")
             );
+            // Past the library table the target belongs to another region: restore it and let
+            // the lookups below resolve (or refuse) it.
+            *code += &format!(
+                "\tcmp {}, 0x{:x} {}\n",
+                REG_PC,
+                ctx.branch_table.library,
+                ctx.comment_str("pc ? library table length")
+            );
+            *code += &format!("\tjae pc_{:x}_jump_past_library_table\n", ctx.pc);
             *code += &format!(
                 "\tlea {}, [map_pc_{:x}] {}\n",
                 REG_ADDRESS,
@@ -7335,6 +7394,13 @@ impl ZiskRom2Asm {
                 ctx.comment_str("address = map[pc]")
             );
             *code += &format!("\tjmp {} {}\n", REG_ADDRESS, ctx.comment_str("jump to address"));
+            *code += &format!("pc_{:x}_jump_past_library_table:\n", ctx.pc);
+            *code += &format!(
+                "\tadd {}, {} {}\n",
+                REG_PC,
+                REG_ADDRESS,
+                ctx.comment_str("pc += ZISKLIB_ROM_ADDR")
+            );
             *code += &format!("pc_{:x}_jump_to_non_library_address:\n", ctx.pc);
         }
 
@@ -7362,6 +7428,14 @@ impl ZiskRom2Asm {
                 REG_ADDRESS,
                 ctx.comment_str("pc -= ROM_ADDR")
             );
+            // Unsigned: a target below ROM_ADDR wraps around and is refused too.
+            *code += &format!(
+                "\tcmp {}, 0x{:x} {}\n",
+                REG_PC,
+                ctx.branch_table.program,
+                ctx.comment_str("pc ? program table length")
+            );
+            *code += "\tjae dynamic_pc_invalid\n";
             *code += &format!(
                 "\tmov {}, [map_pc_{:x} + {}*8] {}\n",
                 REG_ADDRESS,
@@ -7395,6 +7469,18 @@ impl ZiskRom2Asm {
                 REG_ADDRESS,
                 ctx.comment_str("pc -= ROM_ADDR")
             );
+            let high_table = if high_address == ROM_ADDR {
+                ctx.branch_table.program
+            } else {
+                ctx.branch_table.float
+            };
+            *code += &format!(
+                "\tcmp {}, 0x{:x} {}\n",
+                REG_PC,
+                high_table,
+                ctx.comment_str("pc ? table length")
+            );
+            *code += "\tjae dynamic_pc_invalid\n";
             *code += &format!(
                 "\tlea {}, [map_pc_{:x}] {}\n",
                 REG_ADDRESS,
@@ -7411,6 +7497,16 @@ impl ZiskRom2Asm {
             *code += &format!("\tjmp {} {}\n", REG_ADDRESS, ctx.comment_str("jump to address"));
             *code += &format!("pc_{:x}_jump_to_low_address:\n", ctx.pc);
             *code += &format!("\tsub {}, 0x1000 {}\n", REG_PC, ctx.comment_str("pc -= ROM_ENTRY"));
+            // BIOS entries are 8 bytes per 4-byte pc: an unaligned pc would read across two.
+            *code += &format!(
+                "\tcmp {}, 0x{:x} {}\n",
+                REG_PC,
+                ctx.branch_table.bios * 4,
+                ctx.comment_str("pc ? BIOS table length")
+            );
+            *code += "\tjae dynamic_pc_invalid\n";
+            *code += &format!("\ttest {REG_PC}, 0x3\n");
+            *code += "\tjnz dynamic_pc_invalid\n";
             *code += &format!(
                 "\tlea {}, [map_pc_1000] {}\n",
                 REG_ADDRESS,
@@ -9523,8 +9619,8 @@ mod tests {
     /// The reserved ZisK-library window [ZISKLIB_ROM_ADDR, FLOAT_LIB_ROM_ADDR) gets its own
     /// `map_pc_*` table based at ZISKLIB_ROM_ADDR (library code `ret`s to library callers),
     /// never the guest table: mapping it there would pad the ~126 MB gap between the guest
-    /// program and the library with one `.quad emu_end` per address (tens of millions of
-    /// lines). Regression guard for both.
+    /// program and the library with one `.quad dynamic_pc_invalid` per address (tens of millions
+    /// of lines). Regression guard for both.
     #[test]
     fn branch_table_maps_zisk_library_window_apart() {
         let guest0 = ROM_ADDR;
@@ -9558,12 +9654,51 @@ mod tests {
         // The only padding is the 3 addresses strictly between each pair of adjacent
         // instructions (guest0+1..guest1, lib0+1..lib1). The huge guest->library and
         // library->float gaps are left unmapped; a regression that maps the library window
-        // in the guest table would emit tens of millions of `.quad emu_end` lines.
+        // in the guest table would emit tens of millions of `.quad dynamic_pc_invalid` lines.
         assert_eq!(
-            code.matches(".quad emu_end").count(),
+            code.matches(".quad dynamic_pc_invalid").count(),
             6,
             "unexpected padding; the ZisK-library window may be getting mapped"
         );
+    }
+
+    /// The dynamic-jump lookups are bounded by `BranchTableExtents::of`, so it must count exactly
+    /// the entries `append_branch_table` emits for each region: one short and a valid target is
+    /// refused, one long and a lookup reads the next region's entries (or past the table).
+    #[test]
+    fn branch_table_extents_count_the_emitted_entries() {
+        let bios: Vec<u64> = (0..5).map(|i| ROM_ENTRY + 4 * i).collect();
+        let program = [ROM_ADDR + 8, ROM_ADDR + 12, ROM_ADDR + 13, ROM_ADDR + 20];
+        let library = [ZISKLIB_ROM_ADDR + 4, ZISKLIB_ROM_ADDR + 16];
+        let float = [FLOAT_LIB_ROM_ADDR, FLOAT_LIB_ROM_ADDR + 8];
+        let mut sorted_pc_list = bios.clone();
+        sorted_pc_list.extend(program);
+        sorted_pc_list.extend(library);
+        sorted_pc_list.extend(float);
+        sorted_pc_list.sort();
+        let rom = ZiskRom { min_program_pc: program[0], sorted_pc_list, ..Default::default() };
+
+        let mut code = String::new();
+        ZiskRom2Asm::append_branch_table(&rom, &mut code);
+
+        // Entries per region, a region starting at its base's label.
+        let mut counted = BranchTableExtents::default();
+        let mut region: Option<&mut u64> = None;
+        for line in code.lines().filter(|l| l.contains(".quad")) {
+            if let Some(label) = line.split(':').next().and_then(|l| l.strip_prefix("map_pc_")) {
+                let pc = u64::from_str_radix(label, 16).unwrap();
+                match pc {
+                    ROM_ENTRY => region = Some(&mut counted.bios),
+                    ROM_ADDR => region = Some(&mut counted.program),
+                    ZISKLIB_ROM_ADDR => region = Some(&mut counted.library),
+                    FLOAT_LIB_ROM_ADDR => region = Some(&mut counted.float),
+                    _ => {}
+                }
+            }
+            **region.as_mut().expect("an entry before any region base") += 1;
+        }
+        assert_eq!(BranchTableExtents::of(&rom), counted);
+        assert_eq!(counted, BranchTableExtents { bios: 5, program: 21, library: 17, float: 9 });
     }
 
     /// A slot-to-slot copy, `mem[a + dst] = mem[a + src]` in one instruction (b = SRC_IND,
