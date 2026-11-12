@@ -733,6 +733,15 @@ fn encode_op(
     }
 
     if op.end {
+        // `end` only stops the emulators: the ROM rows the AIR checks do not carry it, so in a
+        // proof the instruction is an ordinary one that continues to its jump targets. A failure
+        // exit must therefore be an operation the AIR cannot prove, which is what `halt` is.
+        if op.op != "halt" {
+            return Err(format!(
+                "`end` on `{}`: only a `halt` may end a run (the proof does not stop at `end`)",
+                op.op
+            ));
+        }
         zib.end();
     }
     Ok(())
