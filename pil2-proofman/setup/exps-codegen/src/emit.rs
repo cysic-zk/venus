@@ -10,7 +10,7 @@ use crate::ir::{plan_chunks_ops, ChunkPlan, Instr, Ir, Operand};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// CUDA threads/block of the generated kernels (single source of truth, baked into each launcher).
-pub const GEN_BLK: u64 = 256;
+pub const GEN_BLK: u64 = 64;
 /// Widest cross-chunk cut a chunked kernel may have, in scratch words per row: wider cuts cost
 /// more scratch traffic than they save, and the launcher's one wave would outgrow the scratch.
 pub const SLOTS_CAP: u64 = 1000;
