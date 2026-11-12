@@ -283,16 +283,21 @@ impl<F: PrimeField64> MainInstance<F> {
 
         // Each row packs `MAIN_LANES` consecutive steps, so a row is written lane by lane
         // before moving on. The chunk always spans whole rows (`validate_chunk_size`).
+        // The row is assembled in a local copy and stored once: its setters read-modify-write
+        // bit fields that straddle words, and on the recycled, cache-cold trace buffer every
+        // such access waits for memory (a lane's load overlaps the previous lane's store).
         for trace in main_trace {
+            let mut row = R::default();
             for lane in 0..MAIN_LANES {
                 emu.step_slice_full_trace::<R, F>(
-                    trace,
+                    &mut row,
                     lane,
                     &min_trace.mem_reads,
                     &mut mem_reads_index,
                     reg_trace,
                 );
             }
+            *trace = row;
         }
 
         // The padding row is asked for only past the end of the execution, where the emulator
