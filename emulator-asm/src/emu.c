@@ -711,6 +711,21 @@ extern int _opcode_poseidon2_koalabear(uint64_t address)
     return 0;
 }
 
+// The Goldilocks Poseidon AIRs prove canonical lanes only: a state word in [p, 2^64) fails the
+// execution, as a non-canonical KoalaBear lane does.
+static void goldilocks_permutation_input(uint64_t address, const char *name)
+{
+    const uint64_t *state = (const uint64_t *)address;
+    for (int lane = 0; lane < 16; lane++)
+    {
+        if (state[lane] >= 0xFFFFFFFF00000001ULL)
+        {
+            asm_printf("_opcode_%s() found a non-canonical field element at lane %d;", name, lane);
+            exit(-1);
+        }
+    }
+}
+
 extern int _opcode_poseidon2(uint64_t address)
 {
     ASM_CALL_METRICS_START();
@@ -727,6 +742,7 @@ extern int _opcode_poseidon2(uint64_t address)
     {
 #endif
         // Call poseidon2 compression function
+        goldilocks_permutation_input(address, "poseidon2");
         poseidon2_hash((uint64_t *)address);
 
 #ifdef ASM_PRECOMPILE_CACHE
@@ -763,6 +779,7 @@ extern int _opcode_poseidon1(uint64_t address)
     {
 #endif
         // Call poseidon1 compression function
+        goldilocks_permutation_input(address, "poseidon1");
         poseidon1_hash((uint64_t *)address);
 
 #ifdef ASM_PRECOMPILE_CACHE

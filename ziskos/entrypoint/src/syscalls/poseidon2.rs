@@ -32,6 +32,10 @@ pub unsafe extern "C" fn syscall_poseidon2(
         let state: &mut [u64; 16] = unsafe { &mut *(state) };
 
         // Call poseidon2, mapping u64 to Goldilocks elements
+        // The AIR proves canonical lanes only, as the emulators enforce.
+        if let Some(lane) = state.iter().position(|&word| word >= Goldilocks::ORDER_U64) {
+            panic!("syscall_poseidon2: lane {lane} is not below the Goldilocks modulus");
+        }
         let state_gl = state.map(Goldilocks::new);
         let new_state_gl = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&state_gl);
         for (i, d) in state.iter_mut().enumerate() {

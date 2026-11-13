@@ -741,6 +741,15 @@ pub fn ops_sha256(ctx: &InstContext, stats: &mut dyn OpStats) {
     precompiled_stats_ab_data(ctx, stats, 4, 8, 4);
 }
 
+/// The Goldilocks Poseidon AIRs prove canonical lanes only (their limbs are range-checked against
+/// p), so a state word in [p, 2^64) would execute here and have no witness: it fails the execution,
+/// as a non-canonical KoalaBear lane does.
+fn goldilocks_permutation_input(op: &str, data: &[u64]) {
+    if let Some(lane) = data.iter().position(|&word| word >= Goldilocks::ORDER_U64) {
+        panic!("{op}() found non-canonical field element at lane {lane}");
+    }
+}
+
 /// Performs a Poseidon2 hash over a 16 elements stored in memory at the address
 /// specified by register A0, and stores the output state in the same memory address
 #[inline(always)]
@@ -764,6 +773,7 @@ pub fn opc_poseidon2(ctx: &mut InstContext) {
             }
 
             // Call poseidon2
+            goldilocks_permutation_input("opc_poseidon2", &data);
             let data_gl = data.map(Goldilocks::new);
             let res_gl = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&data_gl);
             for (i, d) in data.iter_mut().enumerate() {
@@ -788,6 +798,7 @@ pub fn opc_poseidon2(ctx: &mut InstContext) {
             }
 
             // Call poseidon2
+            goldilocks_permutation_input("opc_poseidon2", &data);
             let data_gl = data.map(Goldilocks::new);
             let res_gl = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&data_gl);
             for (i, d) in data.iter_mut().enumerate() {
@@ -923,6 +934,7 @@ pub fn opc_poseidon1(ctx: &mut InstContext) {
             }
 
             // Call poseidon1
+            goldilocks_permutation_input("opc_poseidon1", &data);
             let data_gl = data.map(Goldilocks::new);
             let res_gl = poseidon1_hash::<Goldilocks, Poseidon1_16, 16>(&data_gl);
             for (i, d) in data.iter_mut().enumerate() {
@@ -947,6 +959,7 @@ pub fn opc_poseidon1(ctx: &mut InstContext) {
             }
 
             // Call poseidon1
+            goldilocks_permutation_input("opc_poseidon1", &data);
             let data_gl = data.map(Goldilocks::new);
             let res_gl = poseidon1_hash::<Goldilocks, Poseidon1_16, 16>(&data_gl);
             for (i, d) in data.iter_mut().enumerate() {
