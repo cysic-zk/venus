@@ -5845,7 +5845,24 @@ where
                 };
                 let chosen: Option<(usize, usize)> = {
                     let held = in_flight.lock().unwrap();
-                    crate::next_admission(&pending[..scope], |id| admissible(id, &held), cost_of)
+                    crate::next_admission(&pending[..scope], |id| admissible(id, &held), cost_of).or_else(|| {
+                        // Gate shut and everything else admitted: a `Last` instance whose inputs are
+                        // already in (WitnessComponent::witness_ready) need not wait for the others to
+                        // finish. It joins the gate's tally, so the gate still waits for all of them.
+                        let last = WitnessPriority::Last.index();
+                        // usize::MAX: the gate is not published yet, so there is no tally to join.
+                        if scope > last
+                            || last_gate.load(Ordering::Acquire) == usize::MAX
+                            || !pending[..last].iter().all(|p| p.is_empty())
+                        {
+                            return None;
+                        }
+                        let pos = pending[last]
+                            .iter()
+                            .position(|&id| admissible(id, &held) && wcm_clone.witness_ready(id))?;
+                        last_gate.fetch_add(1, Ordering::AcqRel);
+                        Some((last, pos))
+                    })
                 };
 
                 let instance_id = match chosen.and_then(|(band, pos)| pending[band].remove(pos)) {

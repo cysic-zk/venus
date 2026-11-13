@@ -44,6 +44,13 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         Ok(())
     }
 
+    /// Whether `instance_id`'s witness inputs are all in, so that it may be computed before
+    /// the `Last` barrier opens. Asked only for `Last`-band instances, once nothing else waits
+    /// for admission; the default keeps them behind the barrier.
+    fn witness_ready(&self, _instance_id: usize) -> bool {
+        false
+    }
+
     fn end(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _debug_info: &DebugInfo) -> ProofmanResult<()> {
         Ok(())
     }

@@ -872,6 +872,18 @@ impl<F: PrimeField64> WitnessComponent<F> for ZiskExecutor<F> {
             .map_err(|e| ProofmanError::InvalidSetup(format!("{e:#}")))
     }
 
+    /// A ROM instance is ready once its histogram runner has delivered (ASM backend): its
+    /// witness reads nothing the other instances produce.
+    fn witness_ready(&self, instance_id: usize) -> bool {
+        let Ok(secn_instances) = self.state.instance_set.secn_instances.read() else {
+            return false;
+        };
+        secn_instances
+            .get(&instance_id)
+            .and_then(|i| i.as_any().downcast_ref::<zisk_sm_rom::RomInstance>())
+            .is_some_and(|rom| rom.inputs_ready())
+    }
+
     /// Debugs the main and secondary state machines.
     fn debug(
         &self,

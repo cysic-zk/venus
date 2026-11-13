@@ -195,6 +195,17 @@ impl<T> LateValue<T> {
         !matches!(*self.lock(), State::Empty)
     }
 
+    /// Returns `true` once this round's producer has finished (with a value or a
+    /// failure), so that [`with`](Self::with) would not block. `false` for an
+    /// empty cell or a producer still running. Never blocks.
+    pub fn is_settled(&self) -> bool {
+        match &*self.lock() {
+            State::Empty => false,
+            State::Parked(handle) => handle.is_finished(),
+            State::Ready(_) | State::Failed(_) => true,
+        }
+    }
+
     /// Calls `f` with this round's value, joining the producer first if it is
     /// still running.
     ///

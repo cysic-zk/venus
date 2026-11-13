@@ -118,6 +118,16 @@ impl RomInstance {
         Self { zisk_rom, ictx, mode: RomInstanceMode::Asm(AsmState::new(rh)) }
     }
 
+    /// Whether the witness can be computed now without waiting: in ASM mode, once the
+    /// histogram runner has finished. The Rust path aggregates counts every chunk
+    /// collector adds, so it is ready only when every other witness is done (never here).
+    pub fn inputs_ready(&self) -> bool {
+        match &self.mode {
+            RomInstanceMode::Asm(a) => a.rh.is_settled(),
+            RomInstanceMode::Rust(_) => false,
+        }
+    }
+
     /// Returns true when this instance produces its witness without collecting bus data
     /// (currently only the ASM-emulator path).
     pub fn skip_collector(&self) -> bool {

@@ -215,6 +215,17 @@ impl<F: PrimeField64> WitnessManager<F> {
         }
     }
 
+    /// Whether the component that owns `instance_id` reports its inputs complete
+    /// (`WitnessComponent::witness_ready`). False when no component owns it.
+    pub fn witness_ready(&self, instance_id: usize) -> bool {
+        for (idx, component) in self.components.read().unwrap().iter().enumerate() {
+            if self.owns(idx, instance_id).unwrap_or(false) {
+                return component.witness_ready(instance_id);
+            }
+        }
+        false
+    }
+
     /// Compute the stage-1 witnesses of `instance_ids` that nobody else owns or has already
     /// produced. Later stages run over an existing trace and bypass the gate entirely.
     pub fn calculate_witness(
