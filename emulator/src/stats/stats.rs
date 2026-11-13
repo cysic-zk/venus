@@ -4634,7 +4634,7 @@ lib_d:
 lib_helper:
 \tret
 lib_fail:
-\tcopyb(0, 0) -> r10, end
+\thalt(0, 0), j(0, 0), end
 ";
         let program = ziskasm::parser::parse_program(src, "lib").expect("parse");
         let library =
