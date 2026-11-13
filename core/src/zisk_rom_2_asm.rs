@@ -60,10 +60,12 @@ const REG_MEM_READS_ADDRESS: &str = "r12";
 const REG_MEM_READS_SIZE: &str = "r13";
 const REG_AUX: &str = "r11";
 const REG_PC: &str = "r8";
-// "rbp" not used
+/// Holds `GUEST_MEMORY_END - 8` for the whole emulation (emu_start sets it after saving the
+/// caller's copy; the C routines the code calls preserve it): the upper bound of an 8-byte guest
+/// access, compared register to register instead of loaded from memory at every load and store.
+const REG_GUEST_LAST_8: &str = "rbp";
 
 // not used:
-//   - rbp (frame pointer, must be restored before calling other functions),
 //   - rcx (overwritten during syscall)
 //   - rdi
 //   - rsi
@@ -932,6 +934,12 @@ impl ZiskRom2Asm {
         *code += "emu_start:\n";
 
         Self::push_external_registers(&mut ctx, code);
+        *code += &format!(
+            "\tmov {}, 0x{:x} {}\n",
+            REG_GUEST_LAST_8,
+            GUEST_MEMORY_END - 8,
+            ctx.comment_str("last start of an 8-byte guest access")
+        );
 
         *code += &format!("\n{}\n", ctx.comment_str("ZisK registers initialization"));
         *code += &format!("\txor {}, {} {}\n", REG_A, REG_A, ctx.comment_str("a = 0"));
@@ -7687,7 +7695,6 @@ impl ZiskRom2Asm {
                 );
             }
             None => {
-                ctx.guest_widths.insert(width);
                 *code += &match access {
                     GuestAccess::Read => format!("\tcmp {address_reg}, 0x{INPUT_ADDR:x}\n"),
                     GuestAccess::Write => {
@@ -7695,9 +7702,14 @@ impl ZiskRom2Asm {
                     }
                 };
                 *code += "\tjb guest_address_invalid\n";
+                let last = if width == 8 {
+                    REG_GUEST_LAST_8.to_string()
+                } else {
+                    ctx.guest_widths.insert(width);
+                    format!("qword {}[guest_last_{width}]", ctx.ptr)
+                };
                 *code += &format!(
-                    "\tcmp {address_reg}, qword {}[guest_last_{width}] {}\n",
-                    ctx.ptr,
+                    "\tcmp {address_reg}, {last} {}\n",
                     ctx.comment_str("address ? last start in the guest memory")
                 );
                 *code += "\tja guest_address_invalid\n";
