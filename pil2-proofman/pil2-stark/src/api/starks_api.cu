@@ -8,6 +8,7 @@
 #include "starks_api_internal.cuh"
 #include "starks_api_internal.hpp"
 #include "pack_columns.hpp"
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <chrono>
@@ -22,6 +23,16 @@
 #include "unified_buffer_layout.hpp"
 #include "late_arena.hpp"
 
+
+// The prover keeps ~25 streams busy at once (proof, fixed-lane, commit, copy and memory-plan
+// streams). With CUDA's default of 8 hardware work queues, unrelated streams share a queue and wait
+// behind each other's work: the memory planner's 4-byte readbacks waited up to 167 ms behind other
+// streams at phase 1. 32 is CUDA's maximum. Set before the process makes any CUDA call; a value the
+// environment already has is kept.
+__attribute__((constructor)) static void default_cuda_device_max_connections()
+{
+    setenv("CUDA_DEVICE_MAX_CONNECTIONS", "32", 0);
+}
 
 struct FinalSnarkGPU;
 extern void *initFinalSnarkProverGPU(char* zkeyFile, int gpuId);
