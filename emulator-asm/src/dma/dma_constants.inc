@@ -151,6 +151,53 @@
     inc     R_MT_INDEX
 .endm
 
+# Copies rdx >= 8 bytes from rsi to rdi, the ranges disjoint, as aligned 8-byte stores of every
+# destination word they touch: a partial first or last word merges the bytes the copy keeps. Every
+# load stays inside the source range or reads a destination word. Uses rcx, rdx, rsi, rdi, r8, r9,
+# r11; keeps rax and R_MOPS_R.
+.macro DMA_COPY_WORDS
+    lea     r11, [rdi + rdx]              # r11 = end of the destination
+    sub     rsi, rdi                      # rsi = src - dst: the source of a destination byte b is b + rsi
+    mov     rcx, rdi
+    and     rcx, 7
+    jz      2f
+    # First word, partial: its bytes below dst are kept, the rest are the first source bytes.
+    shl     rcx, 3                        # rcx = 8 * (dst & 7)
+    mov     r9, [rdi + rsi]               # the first 8 source bytes
+    shlx    r9, r9, rcx
+    and     rdi, -8                       # rdi = the first destination word
+    mov     r8, -1
+    shlx    r8, r8, rcx
+    andn    r8, r8, [rdi]                 # r8 = the kept low bytes
+    or      r9, r8
+    mov     [rdi], r9
+    add     rdi, 8
+2:  # Whole words.
+    lea     r8, [rdi + 8]
+    cmp     r8, r11
+    ja      3f
+    mov     r9, [rdi + rsi]
+    mov     [rdi], r9
+    mov     rdi, r8
+    jmp     2b
+3:  # Last word, partial: its first (end & 7) bytes are the last source bytes, the rest are kept.
+    mov     rcx, r11
+    and     rcx, 7
+    jz      4f
+    mov     r9, [r11 + rsi - 8]           # the last 8 source bytes
+    neg     rcx
+    lea     rcx, [rcx * 8 + 64]           # rcx = 8 * (8 - (end & 7))
+    shrx    r9, r9, rcx
+    mov     r8, -1
+    neg     rcx
+    add     rcx, 64                       # rcx = 8 * (end & 7)
+    shlx    r8, r8, rcx                   # r8 = mask of the kept high bytes
+    and     r8, [rdi]
+    or      r9, r8
+    mov     [rdi], r9
+4:
+.endm
+
 .ifdef MOPS_LIGHT
 # Light form: one word per record, no steps and no values. R_MOPS_R is zero so the read macro
 # stays shared; a block record is its header with MOPS_NO_PAYLOAD_BIT; the block-write descriptor

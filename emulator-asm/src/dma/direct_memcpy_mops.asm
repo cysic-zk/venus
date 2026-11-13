@@ -33,8 +33,9 @@
 #
 # MEMORY COPY BEHAVIOR:
 # - Handles overlapping src/dst correctly (like memmove)
-# - Non-overlapping: optimized 3-phase copy (pre/loop/post alignment)
-# - Overlapping: backward byte-by-byte copy to avoid corruption
+# - Disjoint, 8 bytes or more: whole destination words with aligned 8-byte stores (DMA_COPY_WORDS),
+#   so the write records read every value back from a store the CPU forwards
+# - Otherwise rep movsb, backward when the destination overlaps the source from above
 ################################################################################
 
 .global direct_dma_memcpy_mops
@@ -275,6 +276,17 @@ direct_dma_xmemcpy_common_entry_point:
 
 .L_mops_done:  
 
+    # Disjoint copies of 8 bytes or more: copy with aligned 8-byte stores of whole destination
+    # words, so the expansion below reads every value back from a store it forwards from.
+    cmp     rdx, 8
+    jb      .L_copy_bytes
+    lea     r9, [rdi + rdx]
+    cmp     r9, rsi
+    jbe     .L_copy_words           # dst + count <= src
+    lea     r9, [rsi + rdx]
+    cmp     r9, rdi
+    jbe     .L_copy_words           # src + count <= dst
+.L_copy_bytes:
     # Check for memory overlap to decide copy direction
     # Overlap exists if: src < dst < src+count (forward copy would corrupt)
     cmp     rdi, rsi                # 1 cycle - compare dst with src
@@ -311,6 +323,11 @@ direct_dma_xmemcpy_common_entry_point:
 .L_write_records:
     MOPS_EXPAND_BLOCK_WRITE         # keeps rax = dst
     ret                             # ~3 cycles
+
+.L_copy_words:
+    mov     rax, rdi
+    DMA_COPY_WORDS
+    jmp     .L_write_records
 /*
 .L_copy_forward_pre:
     # 3-phase copy: pre-alignment bytes, aligned qwords, post-alignment bytes
