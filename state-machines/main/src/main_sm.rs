@@ -297,8 +297,9 @@ impl<F: PrimeField64> MainInstance<F> {
                     reg_trace,
                 );
             }
-            *trace = row;
+            store_row_streaming(trace, &row);
         }
+        store_rows_fence();
 
         // The padding row is asked for only past the end of the execution, where the emulator
         // is looping on the end instruction: it reads no minimal-trace data and touches no
@@ -525,6 +526,43 @@ impl MainSM {
     pub fn debug<F: PrimeField64>(_pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>) {
         // No debug information to display
     }
+}
+
+/// Stores a finished row into the (cache-cold, recycled) trace buffer with non-temporal stores:
+/// a plain copy first reads every destination line for ownership and waits for it, which made
+/// this copy ~9% of the phase-1 CPU. Rows are written in order, so the write-combining buffers
+/// fill whole lines across row boundaries. Falls back to a plain copy off x86-64 or for rows
+/// that are not 16-byte multiples at 16-byte aligned addresses.
+#[inline(always)]
+fn store_row_streaming<R: Copy>(dst: &mut R, src: &R) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::{__m128i, _mm_loadu_si128, _mm_stream_si128};
+        let size = std::mem::size_of::<R>();
+        let d = dst as *mut R as *mut __m128i;
+        if size % 16 == 0 && (d as usize) % 16 == 0 {
+            let s = src as *const R as *const __m128i;
+            // SAFETY: `d` and `s` cover `size` bytes of two distinct `R`s (an exclusive and a shared
+            // borrow), `d` is 16-byte aligned (checked), and SSE2 is part of the x86-64 baseline.
+            unsafe {
+                for i in 0..size / 16 {
+                    _mm_stream_si128(d.add(i), _mm_loadu_si128(s.add(i)));
+                }
+            }
+            return;
+        }
+    }
+    *dst = *src;
+}
+
+/// Orders the streaming row stores before anything this thread publishes after them.
+#[inline(always)]
+fn store_rows_fence() {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a store fence has no memory-safety preconditions.
+    unsafe {
+        std::arch::x86_64::_mm_sfence()
+    };
 }
 
 #[cfg(test)]
