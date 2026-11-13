@@ -22,6 +22,10 @@ pub const PLONK_FILE_MAGIC: &[u8; 8] = b"ZISKPLNK";
 /// Ceiling on a SNARK file after its magic, checked on save and on load. A PLONK one (proof,
 /// vkey, publics) is a few KB; a pilfflonk one carries its vkey JSON, about 0.5 MB.
 const PLONK_FILE_MAX_BYTES: usize = 16 << 20;
+/// Largest bincode encoding of a proof `to_bincode` writes and `from_bincode` reads (proofs travel
+/// that way between coordinator and workers): without a bound, a short message claiming a huge
+/// length makes the decoder allocate it and abort the process. A final proof is under 1 MB.
+const BINCODE_PROOF_MAX_BYTES: usize = 64 << 20;
 
 /// A BN254 PLONK proof: 9 G1 points (64 bytes each) and 6 field evaluations (32 each).
 /// The native verifier aborts the process on any other length rather than failing.
@@ -1488,7 +1492,8 @@ impl Proof {
     ///
     /// Returns [`CommonError::Serialization`] if bincode fails.
     pub fn to_bincode(&self) -> Result<Vec<u8>> {
-        bincode::serde::encode_to_vec(self, bincode::config::standard())
+        let config = bincode::config::standard().with_limit::<BINCODE_PROOF_MAX_BYTES>();
+        bincode::serde::encode_to_vec(self, config)
             .map_err(|e| CommonError::Serialization(e.to_string()))
     }
 
@@ -1503,7 +1508,7 @@ impl Proof {
     ///
     /// Returns [`CommonError::Deserialization`] if the bytes do not hold a proof.
     pub fn from_bincode(bytes: &[u8]) -> Result<Self> {
-        let config = bincode::config::standard();
+        let config = bincode::config::standard().with_limit::<BINCODE_PROOF_MAX_BYTES>();
         let err = |e: bincode::error::DecodeError| CommonError::Deserialization(e.to_string());
         // bincode encodes a struct as the tuple of its fields, so this reads the fields every
         // encoding starts with, including those written before `random_seed` existed.
@@ -2708,6 +2713,15 @@ mod tests {
             .with_random_seed(test_seed());
         let (_, loaded) = save_and_load(&original);
         assert_eq!(loaded.unwrap().random_seed, Some(test_seed()));
+    }
+
+    /// Peers send proofs as bincode: a few bytes claiming a huge length must be an error, not an
+    /// allocation that aborts the coordinator or the worker. Here a Vadcop body with empty
+    /// vectors whose `hash` string claims 2^62 bytes (strings are allocated in full up front).
+    #[test]
+    fn bincode_refuses_a_huge_length_claim() {
+        let claim = [0, 0, 0, 0, 253, 0, 0, 0, 0, 0, 0, 0, 0x40];
+        assert!(Proof::from_bincode(&claim).is_err());
     }
 
     #[test]
