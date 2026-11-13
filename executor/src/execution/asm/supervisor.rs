@@ -85,6 +85,7 @@ impl AsmRunnerSupervisor {
     pub fn spawn_on(
         resources: &Arc<AsmResources>,
         chunk_size: u64,
+        results_job: u64,
         has_rom_sm: bool,
         stats: &ExecutorStatsHandle,
     ) -> Self {
@@ -99,6 +100,7 @@ impl AsmRunnerSupervisor {
                     &mut guard,
                     MAX_NUM_STEPS,
                     chunk_size,
+                    results_job,
                     move || {
                         resources_for_failure.signal_cancellation().map_err(anyhow::Error::from)
                     },

@@ -23,6 +23,7 @@
 #include "emu.hpp"
 #include "c_provided.hpp"
 #include "log.hpp"
+#include "results_ring.hpp"
 #include "../../lib-c/c/src/keccakf_cache/keccakf_cache.hpp"
 #include "../../lib-c/c/src/fcall/fcall.hpp"
 
@@ -559,6 +560,50 @@ void server_setup (void)
             gettimeofday(&stop_time, NULL);
             duration = TimeDiff(start_time, stop_time);
             asm_printf("sem_open(%s) succeeded sem_prec_read=%p in %lu us\n", sem_prec_read_name, sem_prec_read, duration);
+        }
+    }
+
+    /****************/
+    /* RESULTS RING */
+    /****************/
+
+    // Created with the input shared memories; mapped by the minimal-trace service, which writes the
+    // precompile results, and by the memory-ops service, which reads them (results_ring.hpp).
+    if (results_ring_enabled)
+    {
+        if (create_input_shm)
+        {
+            shm_unlink(shmem_results_ring_name);
+            int fd = shm_open(shmem_results_ring_name, O_RDWR | O_CREAT | O_EXCL, 0600);
+            if (fd < 0)
+            {
+                asm_printf("ERROR: Failed creating results ring shm_open(%s) errno=%d=%s\n", shmem_results_ring_name, errno, strerror(errno));
+                exit(-1);
+            }
+            if (ftruncate(fd, RESULTS_RING_SHM_SIZE) != 0)
+            {
+                asm_printf("ERROR: Failed calling ftruncate(%s) errno=%d=%s\n", shmem_results_ring_name, errno, strerror(errno));
+                exit(-1);
+            }
+            close(fd);
+        }
+        if (open_input_shm && ((gen_method == MinimalTrace) || (gen_method == MemOp)))
+        {
+            int fd = shm_open(shmem_results_ring_name, O_RDWR, 0600);
+            if (fd < 0)
+            {
+                asm_printf("ERROR: Failed calling results ring shm_open(%s) errno=%d=%s\n", shmem_results_ring_name, errno, strerror(errno));
+                exit(-1);
+            }
+            void * ring = mmap(NULL, RESULTS_RING_SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            close(fd);
+            if (ring == MAP_FAILED)
+            {
+                asm_printf("ERROR: Failed calling mmap(results ring) errno=%d=%s\n", errno, strerror(errno));
+                exit(-1);
+            }
+            shmem_results_ring_address = ring;
+            results_ring_attach(ring);
         }
     }
 
@@ -1100,6 +1145,9 @@ void server_run (void)
         }
     }
 
+    // Precompile results from the minimal-trace service to the memory-ops one, for this job
+    results_ring_begin(results_ring_job);
+
     /*******/
     /* ASM */
     /*******/
@@ -1130,6 +1178,8 @@ void server_run (void)
     if (verbose) asm_printf("After calling emu_start() trace_address=%lx\n", trace_address);
     gettimeofday(&stop_time,NULL);
     assembly_duration = TimeDiff(start_time, stop_time);
+
+    results_ring_end(emulation_aborted || (MEM_ERROR != 0));
 
     // Reset precompile read address for next emulation
     if (precompile_results_enabled)
@@ -1363,6 +1413,21 @@ void server_cleanup (void)
         {
             asm_printf("ERROR: Failed calling shm_unlink(%s) errno=%d=%s\n", shmem_ram_name, errno, strerror(errno));
         }
+    }
+
+    // Cleanup RESULTS RING
+    if (shmem_results_ring_address != NULL)
+    {
+        result = munmap(shmem_results_ring_address, RESULTS_RING_SHM_SIZE);
+        if (result == -1)
+        {
+            asm_printf("ERROR: Failed calling munmap(results ring) errno=%d=%s\n", errno, strerror(errno));
+        }
+        shmem_results_ring_address = NULL;
+    }
+    if (results_ring_enabled && delete_input_shm)
+    {
+        shm_unlink(shmem_results_ring_name);
     }
 
     // Cleanup INPUT

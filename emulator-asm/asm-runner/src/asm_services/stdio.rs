@@ -303,8 +303,9 @@ impl StdioService {
         &self,
         max_steps: u64,
         chunk_len: u64,
+        results_job: u64,
     ) -> Result<MinimalTraceResponse> {
-        self.send_request(&AsmService::MT, &MinimalTraceRequest { max_steps, chunk_len })
+        self.send_request(&AsmService::MT, &MinimalTraceRequest { max_steps, chunk_len, results_job })
     }
 
     pub(crate) fn send_rom_histogram_request(
@@ -318,8 +319,9 @@ impl StdioService {
         &self,
         max_steps: u64,
         chunk_len: u64,
+        results_job: u64,
     ) -> Result<MemoryOperationsResponse> {
-        self.send_request(&AsmService::MO, &MemoryOperationsRequest { max_steps, chunk_len })
+        self.send_request(&AsmService::MO, &MemoryOperationsRequest { max_steps, chunk_len, results_job })
     }
 
     pub(super) fn send_request<Req, Res>(&self, service: &AsmService, req: &Req) -> Result<Res>

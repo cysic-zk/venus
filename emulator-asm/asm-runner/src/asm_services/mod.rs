@@ -116,16 +116,16 @@ mod tests {
     fn request_payloads_carry_correct_command_ids() {
         assert_eq!(PingRequest.to_request_payload(), [CMD_PING_REQUEST_ID, 0, 0, 0, 0]);
         assert_eq!(
-            MinimalTraceRequest { max_steps: 9, chunk_len: 4 }.to_request_payload(),
-            [CMD_MT_REQUEST_ID, 9, 4, 0, 0]
+            MinimalTraceRequest { max_steps: 9, chunk_len: 4, results_job: 7 }.to_request_payload(),
+            [CMD_MT_REQUEST_ID, 9, 4, 7, 0]
         );
         assert_eq!(
             RomHistogramRequest { max_steps: 5 }.to_request_payload(),
             [CMD_RH_REQUEST_ID, 5, 0, 0, 0]
         );
         assert_eq!(
-            MemoryOperationsRequest { max_steps: 1, chunk_len: 2 }.to_request_payload(),
-            [CMD_MO_REQUEST_ID, 1, 2, 0, 0]
+            MemoryOperationsRequest { max_steps: 1, chunk_len: 2, results_job: 7 }.to_request_payload(),
+            [CMD_MO_REQUEST_ID, 1, 2, 7, 0]
         );
         assert_eq!(ResetRequest.to_request_payload(), [CMD_RESET_REQUEST_ID, 0, 0, 0, 0]);
         assert_eq!(ShutdownRequest.to_request_payload(), [CMD_SHUTDOWN_REQUEST_ID, 0, 0, 0, 0]);

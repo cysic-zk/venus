@@ -51,6 +51,7 @@ extern char shmem_control_output_name[128];
 extern char shmem_input_name[128];
 extern char shmem_output_name[128];
 extern char shmem_precompile_name[128];
+extern char shmem_results_ring_name[128];
 extern char shmem_rom_name[128];
 extern char shmem_ram_name[128];
 
@@ -68,6 +69,8 @@ extern bool call_chunk_done;
 
 // Configuration set by assembly code, accessed by C
 extern bool precompile_results_enabled;
+extern bool results_ring_enabled; // --results-ring: the MT service hands its precompile results to the MO service (results_ring.hpp)
+extern uint64_t results_ring_job; // the job of the current request (request[3]), 0 for none
 
 /*********************/
 /* Generation method */
@@ -123,6 +126,7 @@ extern uint64_t * precompile_results_address;
 // Precompile results shared memory
 extern int shmem_precompile_fd;
 extern void * shmem_precompile_address;
+extern void * shmem_results_ring_address; // results_ring.hpp, NULL unless mapped
 
 // Precompile results semaphores
 extern sem_t * sem_prec_avail;

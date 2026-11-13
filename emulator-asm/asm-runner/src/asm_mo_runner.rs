@@ -348,6 +348,7 @@ impl AsmRunnerMO {
         preloaded: &mut MOShmemReader,
         max_steps: u64,
         chunk_size: u64,
+        results_job: u64,
         on_runner_failure: R,
         asm_services: AsmServices,
         _stats: ExecutorStatsHandle,
@@ -379,7 +380,8 @@ impl AsmRunnerMO {
             stats_begin!(_thread_stats, _parent_id, _mo_scope, "ASM_MO", 0);
 
             #[allow(clippy::let_and_return)]
-            let result = asm_services.send_memory_ops_request(max_steps, chunk_size);
+            let result =
+                asm_services.send_memory_ops_request(max_steps, chunk_size, results_job);
 
             stats_end!(_thread_stats, &_mo_scope);
 

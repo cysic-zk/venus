@@ -156,10 +156,18 @@ impl EmulatorAsm {
         // finishes, so its runner could not be joined. Its service goes unfed only on a
         // process that computes no witness, which never reads the histogram.
         let has_rom_sm = has_rom_sm && asm_resources.rom_histogram_is_fed();
-        let supervisor =
-            AsmRunnerSupervisor::spawn_on(&asm_resources, self.chunk_size, has_rom_sm, stats);
+        // MT computes the precompile results and MO takes them from it: both requests of this
+        // execution carry its job.
+        let results_job = zisk_asm_runner::next_results_job();
+        let supervisor = AsmRunnerSupervisor::spawn_on(
+            &asm_resources,
+            self.chunk_size,
+            results_job,
+            has_rom_sm,
+            stats,
+        );
 
-        let mt_result = self.run_mt_assembly::<F>(zisk_rom, stats, chunk_hook);
+        let mt_result = self.run_mt_assembly::<F>(zisk_rom, results_job, stats, chunk_hook);
 
         let output = match mt_result {
             Ok((min_traces, counters, pub_outs)) => {
@@ -192,6 +200,7 @@ impl EmulatorAsm {
     fn run_mt_assembly<F: PrimeField64>(
         &self,
         zisk_rom: &ZiskRom,
+        results_job: u64,
         stats: &ExecutorStatsHandle,
         chunk_hook: crate::ChunkHook<'_>,
     ) -> ExecutorResult<(Vec<std::sync::Arc<EmuTrace>>, CountersChunkMetrics, PubOutsCollector)>
@@ -229,6 +238,7 @@ impl EmulatorAsm {
                 mt_shmem,
                 MAX_NUM_STEPS,
                 self.chunk_size,
+                results_job,
                 on_chunk,
                 move || {
                     asm_resources_for_failure.signal_cancellation().map_err(anyhow::Error::from)

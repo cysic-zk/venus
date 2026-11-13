@@ -5,11 +5,13 @@ use super::{FromResponsePayload, RequestData, ResponseData, ToRequestPayload, CM
 pub(crate) struct MemoryOperationsRequest {
     pub max_steps: u64,
     pub chunk_len: u64,
+    /// The run's results-ring job (crate::next_results_job), 0 for none.
+    pub results_job: u64,
 }
 
 impl ToRequestPayload for MemoryOperationsRequest {
     fn to_request_payload(&self) -> RequestData {
-        [CMD_MO_REQUEST_ID, self.max_steps, self.chunk_len, 0, 0]
+        [CMD_MO_REQUEST_ID, self.max_steps, self.chunk_len, self.results_job, 0]
     }
 }
 

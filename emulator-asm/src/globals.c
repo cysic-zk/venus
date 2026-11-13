@@ -46,6 +46,7 @@ char shmem_control_output_name[128] = {0};
 char shmem_input_name[128] = {0};
 char shmem_output_name[128] = {0};
 char shmem_precompile_name[128] = {0};
+char shmem_results_ring_name[128] = {0};
 char shmem_rom_name[128] = {0};
 char shmem_ram_name[128] = {0};
 
@@ -63,6 +64,8 @@ bool call_chunk_done = false;
 
 // Configuration set by assembly code, accessed by C
 bool precompile_results_enabled = false;
+bool results_ring_enabled = false;
+uint64_t results_ring_job = 0;
 
 // Default generation method, can be overridden by the --gen argument
 GenMethod gen_method = Fast;
@@ -101,6 +104,7 @@ uint64_t * precompile_results_address = NULL;
 // Precompile results shared memory
 int shmem_precompile_fd = -1;
 void * shmem_precompile_address = NULL;
+void * shmem_results_ring_address = NULL;
 
 // Precompile results semaphores
 sem_t * sem_prec_avail = NULL;

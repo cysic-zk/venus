@@ -64,6 +64,7 @@ impl AsmRunnerMT {
         preloaded: &mut MTShmemReader,
         max_steps: u64,
         chunk_size: u64,
+        results_job: u64,
         mut on_chunk: F,
         on_runner_failure: R,
         asm_services: AsmServices,
@@ -93,7 +94,8 @@ impl AsmRunnerMT {
         let handle = std::thread::spawn(move || {
             stats_begin!(_thread_stats, _parent_id, _mt_scope, "ASM_MT", 0);
             let start = Instant::now();
-            let result = asm_services.send_minimal_trace_request(max_steps, chunk_size);
+            let result =
+                asm_services.send_minimal_trace_request(max_steps, chunk_size, results_job);
 
             stats_end!(_thread_stats, &_mt_scope);
 
@@ -369,6 +371,7 @@ done
             &mut reader,
             1 << 20,
             1,
+            0,
             |_, _, _| Ok(()),
             || Ok(()),
             services,

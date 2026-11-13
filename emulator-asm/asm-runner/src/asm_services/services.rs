@@ -109,6 +109,10 @@ impl AsmService {
 
         if create_input {
             command.arg("--just_create_all_shm");
+            // The ring is created with the input shared memories (emulator-asm/src/results_ring.hpp)
+            if crate::results_ring_enabled() {
+                command.arg("--results-ring");
+            }
         } else {
             command.arg("--just_create_non_input_shm");
         }
@@ -579,8 +583,9 @@ impl AsmServices {
         &self,
         max_steps: u64,
         chunk_len: u64,
+        results_job: u64,
     ) -> Result<MinimalTraceResponse> {
-        self.inner.service.send_minimal_trace_request(max_steps, chunk_len)
+        self.inner.service.send_minimal_trace_request(max_steps, chunk_len, results_job)
     }
 
     /// Send a ROM histogram request to the RH service and return the response.
@@ -596,8 +601,9 @@ impl AsmServices {
         &self,
         max_steps: u64,
         chunk_len: u64,
+        results_job: u64,
     ) -> Result<MemoryOperationsResponse> {
-        self.inner.service.send_memory_ops_request(max_steps, chunk_len)
+        self.inner.service.send_memory_ops_request(max_steps, chunk_len, results_job)
     }
 }
 

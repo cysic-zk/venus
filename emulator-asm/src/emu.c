@@ -7,7 +7,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stddef.h>
+#include <string.h>
 #include "emu.hpp"
+#include "results_ring.hpp"
 #include "log.hpp"
 #include "../../lib-c/c/src/bigint/add256.hpp"
 #include "../../lib-c/c/src/ec/ec.hpp"
@@ -316,86 +319,6 @@ void print_asm_call_metrics (uint64_t total_duration)
 
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-
-const char *precompile_cache_filename = "precompile_cache.bin";
-
-FILE * precompile_file = NULL;
-bool precompile_cache_storing = false;
-bool precompile_cache_loading = false;
-
-void precompile_cache_store_init(void)
-{
-    assert(precompile_file == NULL);
-    assert(precompile_cache_storing == false);
-    assert(precompile_cache_loading == false);
-    precompile_file = fopen(precompile_cache_filename, "wb");
-    if (precompile_file == NULL) {
-        asm_printf("precompile_cache_store_init() Error opening file %s\n", precompile_cache_filename);
-        exit(-1);
-    }
-    precompile_cache_storing = true;
-}
-
-void precompile_cache_load_init(void)
-{
-    assert(precompile_file == NULL);
-    assert(precompile_cache_storing == false);
-    assert(precompile_cache_loading == false);
-    precompile_file = fopen(precompile_cache_filename, "rb");
-    if (precompile_file == NULL) {
-        asm_printf("precompile_cache_load_init() Error opening file %s\n", precompile_cache_filename);
-        exit(-1);
-    }
-    precompile_cache_loading = true;
-}
-
-void precompile_cache_cleanup(void)
-{
-    assert(precompile_file != NULL);
-    fclose(precompile_file);
-    precompile_file = NULL;
-    precompile_cache_storing = false;
-    precompile_cache_loading = false;
-}
-
-// #define ASM_PRECOMPILE_CACHE_DEBUG
-#ifdef ASM_PRECOMPILE_CACHE_DEBUG
-uint64_t total_precompile_cache_size = 0;
-uint64_t total_precompile_cache_counter = 0;
-#endif
-void precompile_cache_store( uint8_t* data, uint64_t size)
-{
-    assert(precompile_file != NULL);
-    assert(precompile_cache_storing == true);
-    fwrite(data, 1, size, precompile_file);
-    fflush(precompile_file);
-#ifdef ASM_PRECOMPILE_CACHE_DEBUG
-    uint64_t previous_total_precompile_cache_size = total_precompile_cache_size;
-    total_precompile_cache_size += size;
-    total_precompile_cache_counter++;
-    asm_printf("precompile_cache_store() Stored %lu bytes at pos=%lu file_size=%ld total_precompile_cache_size=%lu total_precompile_cache_counter=%lu\n", size, previous_total_precompile_cache_size, ftell(precompile_file), total_precompile_cache_size, total_precompile_cache_counter);
-#endif
-}
-
-void precompile_cache_load( uint8_t* data, uint64_t size)
-{
-    assert(precompile_file != NULL);
-    assert(precompile_cache_loading == true);
-    size_t read_size = fread(data, 1, size, precompile_file);
-    if (read_size != size) {
-        asm_printf("precompile_cache_load() Error reading file %s read_size=%zu expected size=%lu pos=%ld\n", precompile_cache_filename, read_size, size, ftell(precompile_file));
-        exit(-1);
-    }
-#ifdef ASM_PRECOMPILE_CACHE_DEBUG
-    total_precompile_cache_size += size;
-    total_precompile_cache_counter++;
-    asm_printf("precompile_cache_load() Loaded %lu bytes at pos=%ld total_precompile_cache_size=%lu total_precompile_cache_counter=%lu\n", size, ftell(precompile_file), total_precompile_cache_size, total_precompile_cache_counter);
-#endif
-}
-
-#endif
-
 uint64_t print_abcflag_counter = 0;
 
 extern int _print_abcflag(uint64_t a, uint64_t b, uint64_t c, uint64_t flag)
@@ -489,23 +412,13 @@ extern int _opcode_keccak(uint64_t address)
     // permutation overwrites it
     keccakf_cache_on_keccakf((const uint64_t *)address);
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_KECCAK, (void *)address, 25*8))
     {
-#endif
         // Call keccak-f compression function
         zisk_keccakf1600((uint64_t *)address);
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)address, 25*8);
+        results_give(RESULTS_OP_KECCAK, (void *)address, 25*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)address, 25*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -534,23 +447,13 @@ extern int _opcode_sha256(uint64_t * state, uint64_t * input)
 #endif
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_SHA256, state, 4*8))
     {
-#endif
         // Call SHA256 compression function
         zisk_sha256(state, input);
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)state, 4*8);
+        results_give(RESULTS_OP_SHA256, state, 4*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)state, 4*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_sha256() called zisk_sha256()\n");
@@ -572,23 +475,13 @@ extern int _opcode_blake2b(uint64_t * state, uint64_t * input, uint64_t index)
 #endif
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLAKE2B, state, 16*8))
     {
-#endif
         // Call blake2b compression function
         blake2b_round(state, input, index);
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)state, 16*8);
+        results_give(RESULTS_OP_BLAKE2B, state, 16*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)state, 16*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_blake2b() called blake2b()\n");
@@ -609,23 +502,13 @@ extern int _opcode_blake3(uint64_t * state, uint64_t * input)
 #endif
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLAKE3, state, 8*8))
     {
-#endif
         // Call blake3 permutation function
         blake3_f((uint32_t *)state, (const uint32_t *)input);
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)state, 8*8);
+        results_give(RESULTS_OP_BLAKE3, state, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)state, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_blake3() called blake3_f()\n");
@@ -646,23 +529,13 @@ extern int _opcode_blake2s(uint64_t * state, uint64_t * input)
 #endif
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLAKE2S, state, 8*8))
     {
-#endif
         // Call blake2s permutation function
         blake2s_f((uint32_t *)state, (const uint32_t *)input);
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)state, 8*8);
+        results_give(RESULTS_OP_BLAKE2S, state, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)state, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_blake2s() called blake2s_f()\n");
@@ -675,15 +548,12 @@ extern int _opcode_blake2s(uint64_t * state, uint64_t * input)
 // element is not a valid input
 static void opcode_poseidon2_non_native(uint64_t address, int (*permute)(uint64_t *), uint64_t words, const char *name)
 {
-    (void)words; // only used with ASM_PRECOMPILE_CACHE
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_%s() address=%08lx\n", name, address);
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_POSEIDON2_KOALABEAR, (void *)address, words*8))
     {
-#endif
         int result = permute((uint64_t *)address);
         if (result != 0)
         {
@@ -691,16 +561,8 @@ static void opcode_poseidon2_non_native(uint64_t address, int (*permute)(uint64_
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)address, words*8);
+        results_give(RESULTS_OP_POSEIDON2_KOALABEAR, (void *)address, words*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)address, words*8);
-    }
-#endif
 }
 
 extern int _opcode_poseidon2_koalabear(uint64_t address)
@@ -737,24 +599,15 @@ extern int _opcode_poseidon2(uint64_t address)
 #endif
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    // Checked whether the result is computed or taken: a non-canonical lane fails the run
+    goldilocks_permutation_input(address, "poseidon2");
+    if (!results_take(RESULTS_OP_POSEIDON2, (void *)address, 16*8))
     {
-#endif
         // Call poseidon2 compression function
-        goldilocks_permutation_input(address, "poseidon2");
         poseidon2_hash((uint64_t *)address);
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)address, 16*8);
+        results_give(RESULTS_OP_POSEIDON2, (void *)address, 16*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)address, 16*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_poseidon2() called poseidon2_hash()\n");
@@ -774,24 +627,15 @@ extern int _opcode_poseidon1(uint64_t address)
 #endif
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    // Checked whether the result is computed or taken: a non-canonical lane fails the run
+    goldilocks_permutation_input(address, "poseidon1");
+    if (!results_take(RESULTS_OP_POSEIDON1, (void *)address, 16*8))
     {
-#endif
         // Call poseidon1 compression function
-        goldilocks_permutation_input(address, "poseidon1");
         poseidon1_hash((uint64_t *)address);
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)address, 16*8);
+        results_give(RESULTS_OP_POSEIDON1, (void *)address, 16*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)address, 16*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_poseidon1() called poseidon1_hash()\n");
@@ -824,10 +668,15 @@ extern int _opcode_arith256(uint64_t * address)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    // dl and dh, one record
+    uint64_t d[8];
+    if (results_take(RESULTS_OP_ARITH256, d, sizeof(d)))
     {
-#endif
+        memcpy(dl, d, 4*8);
+        memcpy(dh, d + 4, 4*8);
+    }
+    else
+    {
         // Call arithmetic 256 operation
         int result = Arith256 (a, b, c, dl, dh);
         if (result != 0)
@@ -836,18 +685,10 @@ extern int _opcode_arith256(uint64_t * address)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)dl, 4*8);
-        precompile_cache_store((uint8_t *)dh, 4*8);
+        memcpy(d, dl, 4*8);
+        memcpy(d + 4, dh, 4*8);
+        results_give(RESULTS_OP_ARITH256, d, sizeof(d));
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)dl, 4*8);
-        precompile_cache_load((uint8_t *)dh, 4*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_arith256() called Arith256()\n");
@@ -890,10 +731,8 @@ extern int _opcode_arith256_mod(uint64_t * address)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_ARITH256_MOD, d, 4*8))
     {
-#endif
         // Compute (no-hints path): Montgomery fast path for the usual moduli, otherwise the
         // assembly long division implementation instead of the Rust Arith256Mod.
         if (Arith256ModFast(a, b, c, module, d) != 0)
@@ -906,16 +745,8 @@ extern int _opcode_arith256_mod(uint64_t * address)
             }
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)d, 4*8);
+        results_give(RESULTS_OP_ARITH256_MOD, d, 4*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)d, 4*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_arith256_mod() called arith256_mod()\n");
@@ -953,10 +784,8 @@ extern int _opcode_arith384_mod(uint64_t * address)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_ARITH384_MOD, d, 6*8))
     {
-#endif
         // Call arithmetic 384 module operation
         int result = Arith384Mod (a, b, c, module, d);
         if (result != 0)
@@ -965,16 +794,8 @@ extern int _opcode_arith384_mod(uint64_t * address)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)d, 6*8);
+        results_give(RESULTS_OP_ARITH384_MOD, d, 6*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)d, 6*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_arith384_mod() called Arith384Mod()\n");
@@ -1007,10 +828,8 @@ extern int _opcode_secp256k1_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_SECP256K1_ADD, p1, 8*8))
     {
-#endif
         // Call point addition function
         int result = AddPointEcP (
             0,
@@ -1024,16 +843,8 @@ extern int _opcode_secp256k1_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_SECP256K1_ADD, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1065,10 +876,8 @@ extern int _opcode_secp256k1_dbl(uint64_t * address)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_SECP256K1_DBL, p1, 8*8))
     {
-#endif
         int result = AddPointEcP (
             1,
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1081,16 +890,8 @@ extern int _opcode_secp256k1_dbl(uint64_t * address)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_SECP256K1_DBL, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_secp256k1_dbl() called AddPointEcP()\n");
@@ -1124,10 +925,8 @@ extern int _opcode_secp256r1_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_SECP256R1_ADD, p1, 8*8))
     {
-#endif
         // Call point addition function
         int result = secp256r1_add_point_ecp (
             0,
@@ -1141,16 +940,8 @@ extern int _opcode_secp256r1_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_SECP256R1_ADD, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1181,10 +972,8 @@ extern int _opcode_secp256r1_dbl(uint64_t * address)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_SECP256R1_DBL, p1, 8*8))
     {
-#endif
         int result = secp256r1_add_point_ecp (
             1,
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1197,16 +986,8 @@ extern int _opcode_secp256r1_dbl(uint64_t * address)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_SECP256R1_DBL, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_secp256r1_dbl() called secp256r1_add_point_ecp()\n");
@@ -1267,10 +1048,21 @@ extern int _opcode_fcall(struct FcallContext * ctx)
 #endif
     int iresult;
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    // result_size and the result words that follow it, one record
+    _Static_assert(offsetof(struct FcallContext, result) == offsetof(struct FcallContext, result_size) + 8,
+                   "the fcall result follows its size");
+    uint64_t taken = results_take_var(RESULTS_OP_FCALL, &ctx->result_size, (1 + FCALL_RESULT_MAX_SIZE)*8);
+    if (taken != 0)
     {
-#endif
+        if (taken != (1 + ctx->result_size)*8)
+        {
+            asm_printf("_opcode_fcall() results ring record of %lu bytes for result_size=%lu\n", taken, ctx->result_size);
+            exit(-1);
+        }
+        iresult = 0;
+    }
+    else
+    {
         // Call fcall
         iresult = Fcall(ctx);
         if (iresult < 0)
@@ -1279,18 +1071,8 @@ extern int _opcode_fcall(struct FcallContext * ctx)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)&ctx->result_size, 1*8);
-        precompile_cache_store((uint8_t *)&ctx->result, ctx->result_size*8);
+        results_give(RESULTS_OP_FCALL, &ctx->result_size, (1 + ctx->result_size)*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)&ctx->result_size, 1*8);
-        precompile_cache_load((uint8_t *)&ctx->result, ctx->result_size*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1333,10 +1115,8 @@ extern int _opcode_bn254_curve_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BN254_CURVE_ADD, p1, 8*8))
     {
-#endif
         // Call point addition function
         int result = BN254CurveAddP (
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1349,16 +1129,8 @@ extern int _opcode_bn254_curve_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_BN254_CURVE_ADD, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1391,10 +1163,8 @@ extern int _opcode_babyjubjub_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BABYJUBJUB_ADD, p1, 8*8))
     {
-#endif
         // Call point addition function
         int result = BabyJubJubAddP (
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1407,16 +1177,8 @@ extern int _opcode_babyjubjub_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_BABYJUBJUB_ADD, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1448,10 +1210,8 @@ extern int _opcode_ed25519_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_ED25519_ADD, p1, 8*8))
     {
-#endif
         // Call point addition function
         int result = Ed25519AddP (
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1464,16 +1224,8 @@ extern int _opcode_ed25519_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_ED25519_ADD, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1504,10 +1256,8 @@ extern int _opcode_bn254_curve_dbl(uint64_t * address)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BN254_CURVE_DBL, p1, 8*8))
     {
-#endif
         // Call point doubling function
         int result = BN254CurveDblP (
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1519,16 +1269,8 @@ extern int _opcode_bn254_curve_dbl(uint64_t * address)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_BN254_CURVE_DBL, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1561,10 +1303,8 @@ extern int _opcode_bn254_complex_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BN254_COMPLEX_ADD, p1, 8*8))
     {
-#endif
         // Call complex addition function
         int result = BN254ComplexAddP (
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1577,16 +1317,8 @@ extern int _opcode_bn254_complex_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_BN254_COMPLEX_ADD, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1619,10 +1351,8 @@ extern int _opcode_bn254_complex_sub(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BN254_COMPLEX_SUB, p1, 8*8))
     {
-#endif
         // Call complex subtraction function
         int result = BN254ComplexSubP (
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1635,16 +1365,8 @@ extern int _opcode_bn254_complex_sub(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_BN254_COMPLEX_SUB, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1677,10 +1399,8 @@ extern int _opcode_bn254_complex_mul(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BN254_COMPLEX_MUL, p1, 8*8))
     {
-#endif
         // Call complex multiplication function
         int result = BN254ComplexMulP (
             p1, // p1 = [x1, y1] = 8x64bits
@@ -1693,16 +1413,8 @@ extern int _opcode_bn254_complex_mul(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 8*8);
+        results_give(RESULTS_OP_BN254_COMPLEX_MUL, p1, 8*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 8*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1739,10 +1451,8 @@ extern int _opcode_bls12_381_curve_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLS12_381_CURVE_ADD, p1, 12*8))
     {
-#endif
         // Call point addition function
         int result = BLS12_381CurveAddP (
             p1, // p1 = [x1, y1] = 12x64bits
@@ -1755,16 +1465,8 @@ extern int _opcode_bls12_381_curve_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 12*8);
+        results_give(RESULTS_OP_BLS12_381_CURVE_ADD, p1, 12*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 12*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1795,10 +1497,8 @@ extern int _opcode_bls12_381_curve_dbl(uint64_t * address)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLS12_381_CURVE_DBL, p1, 12*8))
     {
-#endif
         // Call point doubling function
         int result = BLS12_381CurveDblP (
             p1, // p1 = [x1, y1] = 12x64bits
@@ -1810,16 +1510,8 @@ extern int _opcode_bls12_381_curve_dbl(uint64_t * address)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 12*8);
+        results_give(RESULTS_OP_BLS12_381_CURVE_DBL, p1, 12*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 12*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1852,10 +1544,8 @@ extern int _opcode_bls12_381_complex_add(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLS12_381_COMPLEX_ADD, p1, 12*8))
     {
-#endif
         // Call complex addition function
         int result = BLS12_381ComplexAddP (
             p1, // p1 = [x1, y1] = 12x64bits
@@ -1868,16 +1558,8 @@ extern int _opcode_bls12_381_complex_add(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 12*8);
+        results_give(RESULTS_OP_BLS12_381_COMPLEX_ADD, p1, 12*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 12*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1910,10 +1592,8 @@ extern int _opcode_bls12_381_complex_sub(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLS12_381_COMPLEX_SUB, p1, 12*8))
     {
-#endif
         // Call complex subtraction function
         int result = BLS12_381ComplexSubP (
             p1, // p1 = [x1, y1] = 12x64bits
@@ -1926,16 +1606,8 @@ extern int _opcode_bls12_381_complex_sub(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 12*8);
+        results_give(RESULTS_OP_BLS12_381_COMPLEX_SUB, p1, 12*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 12*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -1968,10 +1640,8 @@ extern int _opcode_bls12_381_complex_mul(uint64_t * p1, uint64_t * p2)
     }
 #endif
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    if (!results_take(RESULTS_OP_BLS12_381_COMPLEX_MUL, p1, 12*8))
     {
-#endif
         // Call complex multiplication function
         int result = BLS12_381ComplexMulP (
             p1, // p1 = [x1, y1] = 12x64bits
@@ -1984,16 +1654,8 @@ extern int _opcode_bls12_381_complex_mul(uint64_t * p1, uint64_t * p2)
             exit(-1);
         }
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)p1, 12*8);
+        results_give(RESULTS_OP_BLS12_381_COMPLEX_MUL, p1, 12*8);
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)p1, 12*8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose)
@@ -2032,11 +1694,15 @@ extern uint64_t _opcode_add256(uint64_t * address)
 
     uint64_t cout = 0;
 
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_storing)
+    // c and cout, one record
+    uint64_t r[5];
+    if (results_take(RESULTS_OP_ADD256, r, sizeof(r)))
     {
-#endif
-
+        memcpy(c, r, 4*8);
+        cout = r[4];
+    }
+    else
+    {
         // cout = [0,1] ok, cout < 0 error
         int icout = Add256 (a, b, cin, c);
         if (icout < 0)
@@ -2046,18 +1712,10 @@ extern uint64_t _opcode_add256(uint64_t * address)
         }
         cout = (uint64_t)icout;
 
-#ifdef ASM_PRECOMPILE_CACHE
-        // Store result in cache
-        precompile_cache_store((uint8_t *)c, 4*8);
-        precompile_cache_store((uint8_t *)&cout, 8);
+        memcpy(r, c, 4*8);
+        r[4] = cout;
+        results_give(RESULTS_OP_ADD256, r, sizeof(r));
     }
-    else if (precompile_cache_loading)
-    {
-        // Load result from cache
-        precompile_cache_load((uint8_t *)c, 4*8);
-        precompile_cache_load((uint8_t *)&cout, 8);
-    }
-#endif
 
 #ifdef DEBUG
     if (emu_verbose) asm_printf("opcode_add256() called Add256()\n");

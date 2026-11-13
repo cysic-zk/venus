@@ -90,6 +90,25 @@ pub struct AsmRunnerOptions {
     pub asm_out_file: bool,
 }
 
+/// Whether the MT service hands its precompile and fcall results to the MO service, which then
+/// copies them instead of computing them (emulator-asm/src/results_ring.hpp). On unless
+/// ZISK_ASM_RESULTS_RING=0.
+pub fn results_ring_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("ZISK_ASM_RESULTS_RING").map_or(true, |v| v != "0"))
+}
+
+/// A job for the results ring: one per execution, sent with both its MT and MO requests (0 when
+/// the ring is off).
+pub fn next_results_job() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    if results_ring_enabled() {
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    } else {
+        0
+    }
+}
+
 impl Default for AsmRunnerOptions {
     fn default() -> Self {
         Self::new()
@@ -197,6 +216,10 @@ impl AsmRunnerOptions {
 
         if self.metrics {
             command.arg("-m");
+        }
+
+        if results_ring_enabled() && matches!(asm_service, AsmService::MT | AsmService::MO) {
+            command.arg("--results-ring");
         }
 
         if self.verbose {

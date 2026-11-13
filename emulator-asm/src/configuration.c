@@ -49,10 +49,7 @@ void print_usage (void)
     asm_printf("\t--open_all_shm open existing shared memories: input, output and internal ones\n");
     asm_printf("\t--just_create_all_shm just create all shared memories and exit, without doing any other setup or starting the server\n");
     asm_printf("\t--just_create_non_input_shm just create all shared memories except the input ones and exit, without doing any other setup or starting the server\n");
-#ifdef ASM_PRECOMPILE_CACHE
-    asm_printf("\t--precompile-cache-store store precompile results in cache file\n");
-    asm_printf("\t--precompile-cache-load load precompile results from cache file\n");
-#endif
+    asm_printf("\t--results-ring hand the precompile results of the minimal-trace service to the memory-ops one\n");
     if (precompile_results_enabled)
     {
         asm_printf("\t-r <precompile_results_file>\n");
@@ -451,21 +448,11 @@ void parse_arguments(int argc, char *argv[])
                 stdio = true;
                 continue;
             }
-#ifdef ASM_PRECOMPILE_CACHE
-            if (strcmp(argv[i], "--precompile-cache-store") == 0)
+            if (strcmp(argv[i], "--results-ring") == 0)
             {
-                precompile_cache_enabled = true;
-                precompile_cache_store_init();
+                results_ring_enabled = true;
                 continue;
             }
-            if (strcmp(argv[i], "--precompile-cache-load") == 0)
-            {
-                precompile_cache_enabled = true;
-                precompile_cache_load_init();
-                continue;
-            }
-
-#endif
             if (precompile_results_enabled && (strcmp(argv[i], "-r") == 0))
             {
                 i++;
@@ -489,14 +476,6 @@ void parse_arguments(int argc, char *argv[])
             exit(-1);
         }
     }
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_enabled == false)
-    {
-        asm_printf("ERROR: parse_arguments() when in precompile cache mode, you need to use an argument: either --precompile-cache-store or --precompile-cache-load\n");
-        print_usage();
-        exit(-1);
-    }
-#endif
 
     // Check that only one generation method was selected as an argument
     if (number_of_selected_generation_methods != 1)
@@ -771,6 +750,13 @@ void configure (void)
             asm_printf("ERROR: configure() Invalid gen_method = %u\n", gen_method);
             exit(-1);
         }
+    }
+
+    // Shared by the minimal-trace (producer) and memory-ops (consumer) services of one prefix
+    if (results_ring_enabled)
+    {
+        strcpy(shmem_results_ring_name, shm_prefix);
+        strcat(shmem_results_ring_name, "_results_ring");
     }
 
     if (arguments_port != 0)

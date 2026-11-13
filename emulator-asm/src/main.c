@@ -98,10 +98,6 @@ int file_lock_fd = -1;
 // Process id
 int process_id = 0;
 
-#ifdef ASM_PRECOMPILE_CACHE
-bool precompile_cache_enabled = false;
-#endif
-
 /*******************/
 /* PROCESS REQUEST */
 /*******************/
@@ -136,6 +132,7 @@ void process_request(const uint64_t * request, uint64_t * response, bool * bRese
             {
                 set_max_steps(request[1]);
                 set_chunk_size(request[2]);
+                results_ring_job = request[3];
 
                 server_run();
 
@@ -199,6 +196,7 @@ void process_request(const uint64_t * request, uint64_t * response, bool * bRese
             {
                 set_max_steps(request[1]);
                 set_chunk_size(request[2]);
+                results_ring_job = request[3];
 
                 server_run();
 
@@ -730,13 +728,6 @@ int main(int argc, char *argv[])
     /************/
 
     server_cleanup();
-
-#ifdef ASM_PRECOMPILE_CACHE
-    if (precompile_cache_enabled)
-    {
-        precompile_cache_cleanup();
-    }
-#endif
 
     fflush(stdout);
     fflush(stderr);
