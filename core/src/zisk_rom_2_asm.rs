@@ -1245,6 +1245,12 @@ impl ZiskRom2Asm {
 
         Self::push_external_registers(&mut ctx, code);
 
+        // The ROM producers check this (ZiskRom::check_data_sections): the writes below go to
+        // the sections' addresses as host pointers.
+        if let Err(e) = rom.check_data_sections() {
+            panic!("ZiskRom2Asm::save_to_asm() {e}");
+        }
+
         // Initialize ROM data from rom.ro_data
         for i in 0..rom.ro_data_64.len() {
             for (j, value) in rom.ro_data_64[i].data.iter().enumerate() {

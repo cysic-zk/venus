@@ -272,6 +272,7 @@ pub fn elf2rom(elf: &[u8]) -> Result<ZiskRom, Box<dyn Error>> {
     if let Some(library) = library {
         merge_library(&mut rom, library)?;
     }
+    rom.check_data_sections()?;
 
     // Preprocess the ROM
     // Split the ROM instructions based on their address to improve performance when

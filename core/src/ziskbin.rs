@@ -500,6 +500,7 @@ pub fn decode_rom(blob: &[u8]) -> Result<ZiskRom, String> {
         return Err(format!("ziskbin: {} trailing bytes", blob.len() - r.pos));
     }
 
+    rom.check_data_sections().map_err(|e| format!("ziskbin: {e}"))?;
     rom.optimize_instruction_lookup().map_err(|e| format!("ziskbin: {e}"))?;
     Ok(rom)
 }
@@ -702,6 +703,33 @@ mod tests {
         assert_eq!(decoded.ro_data_64[0].data, vec![0xdead, 0xbeef]);
         assert_eq!(decoded.rw_data_64[0].data, vec![0, 1, 2]);
         assert_eq!(decoded.zkvmcalls, rom.zkvmcalls);
+    }
+
+    /// The assembly emulator writes the data sections at their addresses as host pointers: a
+    /// container placing one outside the guest memory it initializes must not decode.
+    #[test]
+    fn data_sections_outside_guest_memory_are_rejected() {
+        let outside = [
+            (true, 0x40_0000),        // RO data at a host code address
+            (true, 0xa043_0000),      // RO data in RAM
+            (false, 0x9000_0000),     // RW data in ROM
+            (false, 0xbfff_fff8 + 8), // RW data starting at the end of RAM
+            (false, 0xbfff_fff8),     // RW data running past the end of RAM (two words)
+        ];
+        for (ro, addr) in outside {
+            let mut rom = sample_rom();
+            let section = DataSection64 { addr, data: vec![1, 2] };
+            if ro {
+                rom.ro_data_64.push(section);
+            } else {
+                rom.rw_data_64.push(section);
+            }
+            assert!(
+                decode_rom(&encode_rom(&rom)).is_err(),
+                "{} at 0x{addr:x}",
+                ["RW", "RO"][ro as usize]
+            );
+        }
     }
 
     #[test]

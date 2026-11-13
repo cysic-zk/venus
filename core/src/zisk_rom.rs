@@ -50,8 +50,8 @@
 //!       using as index `(pc-FLOAT_LIB_ROM_ADDR)`
 use crate::FLOAT_LIB_ROM_ADDR_MAX;
 use crate::{
-    zisk_ops::ZiskOp, ZiskInst, ZiskInstBuilder, FLOAT_LIB_ROM_ADDR, ROM_ADDR, ROM_ADDR_MAX,
-    ROM_ENTRY, SRC_IMM, ZISKLIB_ROM_ADDR, ZISKLIB_ROM_ADDR_MAX,
+    zisk_ops::ZiskOp, ZiskInst, ZiskInstBuilder, FLOAT_LIB_ROM_ADDR, RAM_ADDR, RAM_SIZE, ROM_ADDR,
+    ROM_ADDR_MAX, ROM_ENTRY, ROM_SIZE, SRC_IMM, ZISKLIB_ROM_ADDR, ZISKLIB_ROM_ADDR_MAX,
 };
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelIterator;
@@ -160,6 +160,36 @@ fn default_instructions(n: u64) -> Vec<ZiskInst> {
 
 /// ZisK ROM implementation
 impl ZiskRom {
+    /// Checks that every data section lies in the guest memory it initializes: read-only data in
+    /// ROM, read-write data in RAM. The assembly emulator writes them at their addresses before
+    /// the program runs (its guest regions are mapped at their guest addresses), so a section
+    /// elsewhere, from a crafted ELF or ROM container, would overwrite host memory.
+    pub fn check_data_sections(&self) -> Result<(), String> {
+        let regions = [
+            (&self.ro_data_64, "RO", ROM_ADDR, ROM_SIZE),
+            (&self.rw_data_64, "RW", RAM_ADDR, RAM_SIZE),
+        ];
+        for (sections, kind, start, size) in regions {
+            for section in sections {
+                let bytes = (section.data.len() as u64).checked_mul(8);
+                let fits = bytes.is_some_and(|bytes| {
+                    section.addr >= start
+                        && bytes <= size
+                        && section.addr - start <= size - bytes
+                });
+                if !fits {
+                    return Err(format!(
+                        "{kind} data section at 0x{:x} ({} words) is outside [0x{start:x}, 0x{:x})",
+                        section.addr,
+                        section.data.len(),
+                        start + size
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Whether the guest can reach the seed of `zkvm_random_u64`: it uses that zkvmcall, or
     /// its own code (outside the ZisK library, which always holds the seed fcall) issues the
     /// seed fcall directly, as a hand-written `.zisk` program can. Such a guest cannot run
