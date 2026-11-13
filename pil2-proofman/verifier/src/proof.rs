@@ -10,6 +10,19 @@ use std::fs::File;
 #[cfg(feature = "std")]
 use std::path::Path;
 
+/// Largest encoded `VadcopFinalProof` a file may hold (a final proof is under 1 MB). The decoder
+/// sizes containers by the lengths the file claims, so without a bound a tiny file aborts the reader
+/// on an impossible allocation.
+#[cfg(feature = "std")]
+const PROOF_FILE_MAX_BYTES: usize = 64 << 20;
+
+/// The one encoding of a saved `VadcopFinalProof`: fixed-width ints (a Goldilocks element takes 8
+/// bytes, where the default varint spends 9) under `PROOF_FILE_MAX_BYTES`.
+#[cfg(feature = "std")]
+fn proof_file_config() -> impl bincode::config::Config {
+    bincode::config::standard().with_fixed_int_encoding().with_limit::<PROOF_FILE_MAX_BYTES>()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VadcopFinalProof {
     pub proof: Vec<u64>,
@@ -60,8 +73,7 @@ impl VadcopFinalProof {
             )
         })?;
 
-        // Fixed-width ints: a Goldilocks element takes 8 bytes, where the default varint spends 9.
-        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard().with_fixed_int_encoding())?;
+        bincode::serde::encode_into_std_write(self, &mut file, proof_file_config())?;
         Ok(())
     }
 
@@ -73,8 +85,7 @@ impl VadcopFinalProof {
                 format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
             )
         })?;
-        let proof: VadcopFinalProof =
-            bincode::serde::decode_from_std_read(&mut file, bincode::config::standard().with_fixed_int_encoding())?;
+        let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, proof_file_config())?;
         proof.check_canonical_publics()?;
         Ok(proof)
     }
