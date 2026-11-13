@@ -611,6 +611,9 @@ private:
 
     std::atomic<size_t>     pool_cursor_u32_{0};
     std::atomic<bool>       add_error_{false};
+    // ZISK_MEM_PLAN_TIMING: pool-thread time per block (host walk, pieces, waits for multi-piece
+    // counts), reported by run().
+    std::atomic<uint64_t>   t_walk_ns_{0}, t_pieces_ns_{0}, t_piece_sync_ns_{0}, n_pieces_{0};
 
     
 

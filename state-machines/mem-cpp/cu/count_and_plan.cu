@@ -1609,6 +1609,7 @@ bool CountAndPlan::add_chunk(const uint64_t* words, uint32_t n) {
 
 bool CountAndPlan::add_chunk_core_(const uint64_t* words, uint32_t n, uint32_t c) {
     const int s = c % N_STREAMS;
+    const auto t_walk0 = std::chrono::steady_clock::now();
 
     // Host walk: potentials and RAM accesses per record, and the cuts into pieces of whole records.
     // The stream is checked as it is walked: every record starts with a tagged header and ends
@@ -1690,6 +1691,9 @@ bool CountAndPlan::add_chunk_core_(const uint64_t* words, uint32_t n, uint32_t c
         k += len;
     }
     if (cur.nw > 0) pieces.push_back(cur);
+    const auto t_walk1 = std::chrono::steady_clock::now();
+    t_walk_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t_walk1 - t_walk0).count();
+    n_pieces_ += pieces.size();
 
     // Reserve this chunk's compacted-output region in the device ops pool. Each stack bumps its
     // own cursor before reading the other's, so two concurrent reservations cannot both miss the
@@ -1744,8 +1748,10 @@ bool CountAndPlan::add_chunk_core_(const uint64_t* words, uint32_t n, uint32_t c
     uint32_t* d_chunk_out = d_ops_pool_ + base;
     if (pieces.size() == 1 && pieces[0].sub_nw == 0) {
         // One piece: its device potential count is checked against the walk's in run().
-        return add_piece_(words, n, c, s, (uint32_t)pot_total, ram_total, d_chunk_out, false, &h_n_emits_all_[c],
-                          &h_pot_device_[c]);
+        const bool ok = add_piece_(words, n, c, s, (uint32_t)pot_total, ram_total, d_chunk_out, false,
+                                   &h_n_emits_all_[c], &h_pot_device_[c]);
+        t_pieces_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t_walk1).count();
+        return ok;
     }
 
     // Pieces run in order on the chunk's stream; each hands its emit count to the next, and the
@@ -1757,11 +1763,15 @@ bool CountAndPlan::add_chunk_core_(const uint64_t* words, uint32_t n, uint32_t c
         const Piece& pc = pieces[p];
         const uint64_t* pw = pc.sub_nw ? pc.sub : words + pc.w0;
         const uint32_t  pn = pc.sub_nw ? pc.sub_nw : pc.nw;
+        const auto t_p0 = std::chrono::steady_clock::now();
         if (!add_piece_(pw, pn, c, s, pc.pot, pc.ram, d_chunk_out + emits, true, h_n_emits_[s], h_pot_piece_[s]))
             return false;
+        const auto t_p1 = std::chrono::steady_clock::now();
         // The host reads the piece's counts next; block rather than spin until its kernels are done.
         CUDA_CHECK(cudaEventRecord(e_piece_done_[s], streams_[s]));
         CUDA_CHECK(cudaEventSynchronize(e_piece_done_[s]));
+        t_pieces_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(t_p1 - t_p0).count();
+        t_piece_sync_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t_p1).count();
         if (*h_pot_piece_[s] != pc.pot) {
             fprintf(stderr, "CountAndPlan::add_chunk ERROR: chunk %u piece %zu: the device found %u potentials, "
                             "the walk %u\n", c, p, *h_pot_piece_[s], pc.pot);
@@ -1983,7 +1993,17 @@ void CountAndPlan::pool_stop_() {
 
 // A block the planner cannot plan (a malformed stream, a capacity exceeded) returns false after
 // its reason went to stderr: the caller plans it on the CPU instead.
+// ZISK_MEM_PLAN_TIMING (any value) prints where CountAndPlan::run spends its time: the wait for
+// the pieces still in flight, the host preprocessing, and the plan itself.
+static bool plan_timing_enabled() {
+    static const bool on = std::getenv("ZISK_MEM_PLAN_TIMING") != nullptr;
+    return on;
+}
+
 bool CountAndPlan::run(InstanceMeta** metas_out, uint32_t& n_metas) {
+    using clock = std::chrono::steady_clock;
+    const auto t_start = clock::now();
+    auto t_pieces = t_start, t_prepared = t_start;
     bind_device(gpu_device_);
     if (pool_enabled_) pool_stop_();
     if (n_chunks_ == 0) {
@@ -2004,6 +2024,7 @@ bool CountAndPlan::run(InstanceMeta** metas_out, uint32_t& n_metas) {
     if (!preprocessed_) {
         for (int s = 0; s < N_STREAMS; s++)
             CUDA_CHECK(cudaStreamSynchronize(streams_[s]));
+        t_pieces = clock::now();
         // The device found the records by their tag bits, the host walk by their lengths: both
         // must agree on every chunk's potentials, else the plan is not the stream's.
         for (uint32_t c = 0; c < n_chunks_; c++) {
@@ -2079,6 +2100,7 @@ bool CountAndPlan::run(InstanceMeta** metas_out, uint32_t& n_metas) {
         }
         if (!prepare_global_()) return false;
         preprocessed_ = true;
+        t_prepared = clock::now();
     }
     if (!process_worker_()) return false;
 
@@ -2086,6 +2108,18 @@ bool CountAndPlan::run(InstanceMeta** metas_out, uint32_t& n_metas) {
         CUDA_CHECK(cudaEventRecord(e_metas_ready_, meta_stream_));
         CUDA_CHECK(cudaEventSynchronize(e_metas_ready_));
         metas_ready_recorded_ = true;
+    }
+    if (plan_timing_enabled()) {
+        auto ms = [](clock::time_point a, clock::time_point b) {
+            return std::chrono::duration<double, std::milli>(b - a).count();
+        };
+        const auto t_end = clock::now();
+        fprintf(stderr, "CountAndPlan::run: %u chunks, pieces in flight %.1f ms, preprocess %.1f ms, plan %.1f ms; "
+                        "pool threads: walk %.1f ms, %llu pieces %.1f ms, multi-piece waits %.1f ms\n",
+                n_chunks_, ms(t_start, t_pieces), ms(t_pieces, t_prepared), ms(t_prepared, t_end),
+                t_walk_ns_.load() / 1e6, (unsigned long long)n_pieces_.load(), t_pieces_ns_.load() / 1e6,
+                t_piece_sync_ns_.load() / 1e6);
+        t_walk_ns_ = 0; t_pieces_ns_ = 0; t_piece_sync_ns_ = 0; n_pieces_ = 0;
     }
     // Hand back the internal pointer + count (no copy). The records — and
     // the pinned-host buffers their pointers reference — stay alive until
