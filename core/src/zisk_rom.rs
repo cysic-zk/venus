@@ -51,7 +51,8 @@
 use crate::FLOAT_LIB_ROM_ADDR_MAX;
 use crate::{
     zisk_ops::ZiskOp, ZiskInst, ZiskInstBuilder, FLOAT_LIB_ROM_ADDR, RAM_ADDR, RAM_SIZE, ROM_ADDR,
-    ROM_ADDR_MAX, ROM_ENTRY, ROM_SIZE, SRC_IMM, ZISKLIB_ROM_ADDR, ZISKLIB_ROM_ADDR_MAX,
+    ROM_ADDR_MAX, ROM_ENTRY, ROM_MAX_CODE_BYTES, ROM_SIZE, SRC_IMM, ZISKLIB_ROM_ADDR,
+    ZISKLIB_ROM_ADDR_MAX,
 };
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelIterator;
@@ -370,6 +371,26 @@ impl ZiskRom {
         } else {
             0
         };
+
+        // The tables are dense over the addresses, four bytes to an aligned slot and one to a
+        // non-aligned entry. A ROM that fits the ROM air spans at most ROM_MAX_CODE_BYTES of code,
+        // so a few instructions far apart (from an untrusted ELF or ziskbin container) must not
+        // size them: bound the tables before allocating any.
+        let entries = num_bios_instructions
+            + num_program_instructions
+            + num_program_na_instructions
+            + num_zisklib_instructions
+            + num_zisklib_na_instructions
+            + num_float_instructions
+            + num_float_na_instructions;
+        let max_entries = ROM_MAX_CODE_BYTES / 4 + ROM_MAX_CODE_BYTES;
+        if entries > max_entries {
+            return Err(format!(
+                "ROM instruction addresses need {entries} lookup entries, more than the {max_entries} \
+                 a ROM of at most {ROM_MAX_CODE_BYTES} code bytes needs"
+            )
+            .into());
+        }
 
         self.rom_bios_instructions = default_instructions(num_bios_instructions);
         self.rom_program_instructions = default_instructions(num_program_instructions);
@@ -986,6 +1007,21 @@ mod tests {
             create_test_internal_inst_builder(ROM_ADDR_MAX + 4, ROM_ADDR, 1),
         );
         assert!(rom.optimize_instruction_lookup().is_err());
+    }
+
+    /// Two instructions at the two ends of the program area: the dense tables would need over
+    /// 120M entries (tens of gigabytes), far more than any ROM that fits the ROM air, so the lookup
+    /// must refuse them before allocating.
+    #[test]
+    fn test_optimize_sparse_program_err() {
+        let mut rom = ZiskRom { next_init_inst_addr: ROM_ENTRY, ..Default::default() };
+
+        rom.insts.insert(ROM_ADDR, create_test_inst_builder(ROM_ADDR, 1));
+        let far = ZISKLIB_ROM_ADDR - 3;
+        rom.insts.insert(far, create_test_internal_inst_builder(far, ROM_ADDR, 2));
+        let err = rom.optimize_instruction_lookup().unwrap_err().to_string();
+        assert!(err.contains("lookup entries"), "{err}");
+        assert!(rom.rom_program_na_instructions.is_empty());
     }
 
     #[test]

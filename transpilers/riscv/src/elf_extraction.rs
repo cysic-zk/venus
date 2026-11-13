@@ -9,7 +9,7 @@ use elf::{
 use std::{collections::HashMap, error::Error, fs, path::Path};
 
 use zisk_core::is_elf_file;
-use zisk_core::mem::{DataSection, RAM_ADDR, RAM_SIZE, ROM_ADDR, ROM_SIZE};
+use zisk_core::mem::{DataSection, RAM_ADDR, RAM_SIZE, ROM_ADDR, ROM_MAX_CODE_BYTES, ROM_SIZE};
 
 const RAM_START_ADDR: u64 = RAM_ADDR;
 const RAM_END_ADDR: u64 = RAM_ADDR + RAM_SIZE;
@@ -92,6 +92,9 @@ pub fn collect_elf_payload_from_bytes(file_data: &[u8]) -> Result<ElfPayload, Bo
 
     // Loaded segment ranges [start, end), for cross-segment overlap detection.
     let mut loaded: Vec<(u64, u64)> = Vec::new();
+
+    // Code bytes of the segments accepted so far, bounded before any of it is transpiled.
+    let mut code_bytes = 0u64;
 
     // --- Loadable image from program headers (PT_LOAD only) ---
     // The image is built exclusively from PT_LOAD segments; section headers are
@@ -228,6 +231,16 @@ pub fn collect_elf_payload_from_bytes(file_data: &[u8]) -> Result<ElfPayload, Bo
                     "executable PT_LOAD segment at 0x{seg_start:x} has an odd byte length ({}); \
                      RISC-V instructions are 2- or 4-byte units",
                     file_bytes.len()
+                )
+                .into());
+            }
+            // More code than a ROM can hold could not be proven, and transpiling it is what costs
+            // the memory: refuse it first.
+            code_bytes += file_bytes.len() as u64;
+            if code_bytes > ROM_MAX_CODE_BYTES {
+                return Err(format!(
+                    "executable PT_LOAD segment at 0x{seg_start:x} brings the code to {code_bytes} bytes, \
+                     more than the {ROM_MAX_CODE_BYTES} a ROM can hold"
                 )
                 .into());
             }

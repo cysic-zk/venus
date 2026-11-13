@@ -8,8 +8,14 @@ use crate::{RomError, RomInstance, RomResult};
 use proofman_fields::PrimeField64;
 use zisk_asm_runner::AsmRunnerRH;
 use zisk_common::{create_atomic_vec, ComponentBuilder, Instance, InstanceCtx, LateValue};
-use zisk_core::ZiskRom;
-use zisk_pil::RomTrace;
+use zisk_core::{ZiskRom, ROM_MAX_INSTRUCTIONS};
+use zisk_pil::{RomRomTrace, RomTrace};
+
+// The transpiler bounds every ROM by ROM_MAX_INSTRUCTIONS, one per row of the ROM traces.
+const _: () = assert!(
+    RomTrace::<proofman_fields::Goldilocks>::NUM_ROWS == ROM_MAX_INSTRUCTIONS
+        && RomRomTrace::<proofman_fields::Goldilocks>::NUM_ROWS == ROM_MAX_INSTRUCTIONS
+);
 
 /// Names the ROM histogram in [`LateValue`]'s wait log — the only place the
 /// runner's residual is visible once it is no longer joined inside `execute`.

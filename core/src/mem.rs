@@ -207,6 +207,12 @@ pub const ROM_ADDR: u64 = 0x9000_0000;
 pub const ROM_SIZE: u64 = 0x08000000; // 128M
 /// Maximum program ROM instruction address
 pub const ROM_ADDR_MAX: u64 = ROM_ADDR + ROM_SIZE - 1;
+/// Instructions a provable ROM holds: one per row of the ROM air (the ROM state machine asserts
+/// this against the ROM traces' size).
+pub const ROM_MAX_INSTRUCTIONS: usize = 1 << 22;
+/// Bytes of code a provable ROM can hold: a RISC-V instruction is at most 4 bytes and transpiles
+/// to at least one ROM instruction.
+pub const ROM_MAX_CODE_BYTES: u64 = 4 * ROM_MAX_INSTRUCTIONS as u64;
 /// Size of float library ROM
 pub const FLOAT_LIB_ROM_SIZE: u64 = 0x100000; // 1M
 /// First float library ROM instruction address
