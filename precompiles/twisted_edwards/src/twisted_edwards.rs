@@ -1,6 +1,7 @@
 use proofman_fields::PrimeField64;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 
 use proofman_common::{AirInstance, FromTrace, GenericTrace, ProofmanResult, SetupCtx};
 use proofman_util::{timer_start_trace, timer_stop_and_log_trace};
@@ -213,7 +214,7 @@ impl<F: PrimeField64> TwistedEdwardsSM<F> {
 
         let padding_row = R::default();
 
-        trace.buffer[num_rows_needed..num_rows].par_iter_mut().for_each(|slot| *slot = padding_row);
+        pad_rows_streaming(&mut trace.buffer[num_rows_needed..num_rows], &padding_row);
 
         timer_stop_and_log_trace!(TWISTED_EDWARDS_TRACE);
 

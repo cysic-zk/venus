@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 use zisk_common::SegmentId;
 use zisk_pil::{MemAirValues, MemTrace, MemTraceRow, MemTraceRowOps, MemTraceRowPacked};
 
@@ -1178,7 +1179,7 @@ pub(crate) fn fill_mem_trace<F: PrimeField64, R: MemTraceRowOps<F>>(
             for lane in 0..lanes_x_row {
                 set_mem_padding_lane::<F, R>(&mut pad_row, lane, &padding);
             }
-            rows[from_row..].par_iter_mut().for_each(|row| *row = pad_row);
+            pad_rows_streaming(&mut rows[from_row..], &pad_row);
         }
         let (row, lane) = lanes.split(first_pad_slot);
         padding.set_first_lane::<F, R>(&mut rows[row], lane);

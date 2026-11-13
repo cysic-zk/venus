@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 
 #[cfg(feature = "debug_mem_align")]
 use std::sync::Mutex;
@@ -873,7 +874,7 @@ impl<F: PrimeField64> MemAlignSM<F> {
         padding_row.set_reset(true);
 
         // Store the padding rows
-        trace.buffer[total_index..num_rows].par_iter_mut().for_each(|slot| *slot = padding_row);
+        pad_rows_streaming(&mut trace.buffer[total_index..num_rows], &padding_row);
 
         Ok(AirInstance::new_from_trace(FromTrace::new(&mut trace)))
     }

@@ -1,6 +1,7 @@
 use proofman_fields::PrimeField64;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 
 use proofman_common::{AirInstance, ProofmanResult, SetupCtx};
 use proofman_util::{timer_start_trace, timer_stop_and_log_trace};
@@ -632,9 +633,7 @@ impl<F: PrimeField64> ArithEqSM<F> {
         // match the PIL exactly (full air: QS=3, USE_S=true, CEQS=3 → 3 / 157 / 96):
         let padding_row = R::default();
 
-        R::trace_rows(&mut trace)[num_rows_needed..num_rows]
-            .par_iter_mut()
-            .for_each(|slot| *slot = padding_row);
+        pad_rows_streaming(&mut R::trace_rows(&mut trace)[num_rows_needed..num_rows], &padding_row);
 
         phase_end!(d_pad, t_pad);
         phase_log!(

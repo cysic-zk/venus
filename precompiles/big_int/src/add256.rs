@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 
 use proofman_fields::PrimeField64;
 use rayon::prelude::*;
@@ -173,7 +174,7 @@ impl<F: PrimeField64> Add256SM<F> {
         timer_stop_and_log_trace!(ADD256_TRACE);
 
         let padding_row: R = Default::default();
-        trace.buffer[total_inputs..num_rows].par_iter_mut().for_each(|slot| *slot = padding_row);
+        pad_rows_streaming(&mut trace.buffer[total_inputs..num_rows], &padding_row);
 
         Ok(AirInstance::<F>::new_from_trace(FromTrace::new(&mut trace)))
     }

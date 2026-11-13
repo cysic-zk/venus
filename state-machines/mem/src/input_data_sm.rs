@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 
 #[cfg(feature = "debug_mem")]
 use std::{
@@ -16,7 +17,6 @@ use zisk_sm_mem_common::{
 
 use proofman_common::{AirInstance, FromTrace, ProofmanResult};
 use proofman_fields::PrimeField64;
-use rayon::prelude::*;
 use zisk_common::SegmentId;
 use zisk_core::{INPUT_ADDR, MAX_INPUT_SIZE};
 use zisk_pil::{
@@ -683,7 +683,7 @@ impl<F: PrimeField64> InputDataSM<F> {
                         &value_words,
                     );
                 }
-                trace.buffer[from_row..].par_iter_mut().for_each(|row| *row = pad_row);
+                pad_rows_streaming(&mut trace.buffer[from_row..], &pad_row);
             }
         }
 

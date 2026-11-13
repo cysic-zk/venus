@@ -7556,6 +7556,7 @@ dependencies = [
  "proofman-common",
  "proofman-fields",
  "proofman-verifier",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

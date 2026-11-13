@@ -10,8 +10,8 @@
 use crate::{fill_rows, BinaryInput, BinaryLanes};
 use proofman_common::{AirInstance, FromTrace, ProofmanResult};
 use proofman_fields::PrimeField64;
-use rayon::prelude::*;
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 use zisk_core::zisk_ops::ZiskOp;
 use zisk_pil::{
     BinaryAddAirValues, BinaryAddHugeAirValues, BinaryAddHugeTrace, BinaryAddHugeTraceRowOps,
@@ -114,9 +114,7 @@ macro_rules! impl_binary_add_row {
                 let num_rows = trace.num_rows();
                 if rows_used < num_rows {
                     let padding_row = R::default();
-                    trace.buffer[rows_used..num_rows]
-                        .par_iter_mut()
-                        .for_each(|slot| *slot = padding_row);
+                    pad_rows_streaming(&mut trace.buffer[rows_used..num_rows], &padding_row);
                 }
 
                 let mut air_values = $air_values::<F>::new();
@@ -272,22 +270,11 @@ impl<F: PrimeField64> BinaryAddSM<F> {
             &flat_inputs,
             R::LANES_X_ROW,
             |trace_row, row_inputs| {
+                // Only the last row can be short. Its leftover lanes are not covered by the padding
+                // rows written afterwards; they keep the defaulted row's zeros: 0 + 0 = 0, the
+                // padding operation.
                 for (lane, input) in row_inputs.iter().enumerate() {
                     self.process_slice::<T, R>(trace_row, lane, input);
-                }
-                // Only the last row can be short. Its leftover lanes are not covered by the padding
-                // rows written afterwards, so they are zeroed here: 0 + 0 = 0, the padding operation.
-                // The trace buffer comes from a pool and is not zeroed, so leaving them would put
-                // stale values on the bus.
-                for lane in row_inputs.len()..R::LANES_X_ROW {
-                    trace_row.set_slot(
-                        lane,
-                        &[0; LIMBS_X_ADD],
-                        &[0; LIMBS_X_ADD],
-                        &[0; CHUNKS_X_FULL_ADD],
-                        &[false; LIMBS_X_ADD],
-                        false,
-                    );
                 }
             },
         );

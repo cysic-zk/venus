@@ -10,14 +10,18 @@
 //! * [`fill_slots`] -- a fill for the airs that pack several operations into a row. It walks the
 //!   chunked inputs with a cursor rather than flattening them, so no `Vec<&BinaryInput>` the size
 //!   of the instance is built to be read once.
+//!
+//! Both assemble each row in a local and stream it into the trace buffer, which is recycled and
+//! cold: setting the packed fields in place would read every destination line first.
 
 use crate::BinaryInput;
 use rayon::prelude::*;
+use zisk_common::{store_row_streaming, store_rows_fence};
 
 /// Fills `rows` in parallel, giving each row its slice of `inputs`.
 ///
-/// `fill` receives one row and the `inputs_per_row` inputs that belong to it. The last row may get
-/// a shorter slice when `inputs` does not divide evenly.
+/// `fill` receives one row, defaulted, and the `inputs_per_row` inputs that belong to it. The last
+/// row may get a shorter slice when `inputs` does not divide evenly.
 ///
 /// The rows are split into no more chunks than there are rayon threads.
 ///
@@ -28,7 +32,7 @@ use rayon::prelude::*;
 /// comparisons per call, not per row, so it is worth keeping in release builds too.
 pub fn fill_rows<R, T, Fill>(rows: &mut [R], inputs: &[T], inputs_per_row: usize, fill: Fill)
 where
-    R: Send,
+    R: Default + Copy + Send,
     T: Sync,
     Fill: Fn(&mut R, &[T]) + Sync + Send,
 {
@@ -49,8 +53,11 @@ where
         .zip(inputs.par_chunks(rows_per_task * inputs_per_row))
         .for_each(|(row_chunk, input_chunk)| {
             for (row, row_inputs) in row_chunk.iter_mut().zip(input_chunk.chunks(inputs_per_row)) {
-                fill(row, row_inputs);
+                let mut filled = R::default();
+                fill(&mut filled, row_inputs);
+                store_row_streaming(row, &filled);
             }
+            store_rows_fence();
         });
 }
 
@@ -103,9 +110,9 @@ fn chunk_starts(chunks: &[Vec<BinaryInput>]) -> Vec<usize> {
 /// Fills `rows` in parallel from the chunked `inputs`.
 ///
 /// Slots are numbered consecutively across the whole instance, `lanes_x_row` to a row, so row `r`
-/// takes operations `r * lanes_x_row ..`. `slot` fills one of them;
+/// takes operations `r * lanes_x_row ..`. `slot` fills one of them, in a defaulted row;
 /// `pad` fills a slot of the last row that has no operation left — only the last row can be short,
-/// and the trace buffer comes from a pool and is not zeroed, so those slots cannot be left alone.
+/// and those slots must hold the padding operation.
 ///
 /// The rows are split into no more chunks than there are rayon threads.
 ///
@@ -119,7 +126,7 @@ pub fn fill_slots<R, Slot, Pad>(
     slot: Slot,
     pad: Pad,
 ) where
-    R: Send,
+    R: Default + Copy + Send,
     Slot: Fn(&mut R, usize, &BinaryInput) + Sync + Send,
     Pad: Fn(&mut R, usize) + Sync + Send,
 {
@@ -147,21 +154,27 @@ pub fn fill_slots<R, Slot, Pad>(
 
         for row in row_chunk.iter_mut() {
             let filled = lanes_x_row.min(total_inputs - done);
+            let mut assembled = R::default();
             for lane in 0..filled {
                 let input = cursor.next().expect("the cursor holds one input per filled slot");
-                slot(row, lane, input);
+                slot(&mut assembled, lane, input);
             }
             for lane in filled..lanes_x_row {
-                pad(row, lane);
+                pad(&mut assembled, lane);
             }
+            store_row_streaming(row, &assembled);
             done += filled;
         }
+        store_rows_fence();
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Widest packing the slot test exercises.
+    const MAX_TEST_LANES: usize = 8;
 
     /// Chunk lengths that exercise the cursor: empty chunks at both ends and in the middle, chunks
     /// shorter and longer than a row, and a total that does not divide by the packing.
@@ -203,8 +216,8 @@ mod tests {
                 let rows_used = total.div_ceil(lanes_x_row);
 
                 // Each row records the global index of every operation it was given, and `u64::MAX`
-                // for the slots the padding closure filled.
-                let mut rows = vec![vec![u64::MAX; lanes_x_row]; rows_used];
+                // for the slots the padding closure filled; lanes past `lanes_x_row` stay unused.
+                let mut rows = vec![[0u64; MAX_TEST_LANES]; rows_used];
 
                 fill_slots(
                     &mut rows,
@@ -215,8 +228,9 @@ mod tests {
                     |row, lane| row[lane] = u64::MAX,
                 );
 
+                let lanes = |row: &[u64; MAX_TEST_LANES]| row[..lanes_x_row].to_vec();
                 let seen: Vec<u64> =
-                    rows.iter().flatten().copied().filter(|&v| v != u64::MAX).collect();
+                    rows.iter().flat_map(lanes).filter(|&v| v != u64::MAX).collect();
                 assert_eq!(
                     seen,
                     (0..total as u64).collect::<Vec<_>>(),
@@ -224,7 +238,7 @@ mod tests {
                 );
 
                 // Only the last row may be padded, and only past the operations it holds.
-                let padded: usize = rows.iter().flatten().filter(|&&v| v == u64::MAX).count();
+                let padded: usize = rows.iter().flat_map(lanes).filter(|&v| v == u64::MAX).count();
                 assert_eq!(
                     padded,
                     rows_used * lanes_x_row - total,

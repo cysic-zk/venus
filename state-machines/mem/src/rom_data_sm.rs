@@ -1,9 +1,9 @@
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 
 use crate::{mem_sm::MemPreviousSegment, MemModule, MemOps};
 use proofman_common::{AirInstance, FromTrace, ProofmanResult};
 use proofman_fields::PrimeField64;
-use rayon::prelude::*;
 use std::{
     fs::File,
     io::{BufWriter, Write},
@@ -481,7 +481,7 @@ impl<F: PrimeField64> RomDataSM<F> {
                 for lane in 0..lanes_x_row {
                     set_rom_data_padding_lane::<F, R>(&mut pad_row, lane, last_addr, &last_value);
                 }
-                trace.buffer[from_row..].par_iter_mut().for_each(|row| *row = pad_row);
+                pad_rows_streaming(&mut trace.buffer[from_row..], &pad_row);
             }
         }
 

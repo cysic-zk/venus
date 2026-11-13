@@ -13,8 +13,8 @@
 use crate::{fill_rows, lanes_x_row::MAX_ADD_HI, BinaryInput};
 use proofman_common::{AirInstance, FromTrace, ProofmanResult};
 use proofman_fields::PrimeField64;
-use rayon::prelude::*;
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 use zisk_core::zisk_ops::ZiskOp;
 use zisk_pil::{
     BinaryAddHiAirValues, BinaryAddHiHugeAirValues, BinaryAddHiHugeTrace,
@@ -110,9 +110,7 @@ macro_rules! impl_binary_add_hi_row {
                 let num_rows = trace.num_rows();
                 if rows_used < num_rows {
                     let padding_row = R::default();
-                    trace.buffer[rows_used..num_rows]
-                        .par_iter_mut()
-                        .for_each(|slot| *slot = padding_row);
+                    pad_rows_streaming(&mut trace.buffer[rows_used..num_rows], &padding_row);
                 }
 
                 let mut air_values = $air_values::<F>::new();

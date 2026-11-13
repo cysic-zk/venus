@@ -11,7 +11,10 @@ use crate::{MainPlanner, MainSmError};
 use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
 use proofman_fields::PrimeField64;
 use rayon::prelude::*;
-use zisk_common::{EmuTrace, InstanceCtx, Plan, SegmentId};
+use zisk_common::{
+    pad_rows_streaming, store_row_streaming, store_rows_fence, EmuTrace, InstanceCtx, Plan,
+    SegmentId,
+};
 use zisk_core::{ZiskRom, REGS_IN_MAIN, REGS_IN_MAIN_FROM, REGS_IN_MAIN_TO};
 use zisk_pil::{MainAirValues, MAIN_LANES, MAIN_STEPS_PER_SEGMENT};
 use zisk_sm_mem_common::MemHelpers;
@@ -512,7 +515,7 @@ impl<F: PrimeField64> MainInstance<F> {
         num_rows: usize,
         pad_row: R,
     ) -> R {
-        buffer[filled_rows..num_rows].par_iter_mut().for_each(|row| *row = pad_row);
+        pad_rows_streaming(&mut buffer[filled_rows..num_rows], &pad_row);
         buffer[num_rows - 1]
     }
 }
@@ -526,43 +529,6 @@ impl MainSM {
     pub fn debug<F: PrimeField64>(_pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>) {
         // No debug information to display
     }
-}
-
-/// Stores a finished row into the (cache-cold, recycled) trace buffer with non-temporal stores:
-/// a plain copy first reads every destination line for ownership and waits for it, which made
-/// this copy ~9% of the phase-1 CPU. Rows are written in order, so the write-combining buffers
-/// fill whole lines across row boundaries. Falls back to a plain copy off x86-64 or for rows
-/// that are not 16-byte multiples at 16-byte aligned addresses.
-#[inline(always)]
-fn store_row_streaming<R: Copy>(dst: &mut R, src: &R) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use std::arch::x86_64::{__m128i, _mm_loadu_si128, _mm_stream_si128};
-        let size = std::mem::size_of::<R>();
-        let d = dst as *mut R as *mut __m128i;
-        if size % 16 == 0 && (d as usize) % 16 == 0 {
-            let s = src as *const R as *const __m128i;
-            // SAFETY: `d` and `s` cover `size` bytes of two distinct `R`s (an exclusive and a shared
-            // borrow), `d` is 16-byte aligned (checked), and SSE2 is part of the x86-64 baseline.
-            unsafe {
-                for i in 0..size / 16 {
-                    _mm_stream_si128(d.add(i), _mm_loadu_si128(s.add(i)));
-                }
-            }
-            return;
-        }
-    }
-    *dst = *src;
-}
-
-/// Orders the streaming row stores before anything this thread publishes after them.
-#[inline(always)]
-fn store_rows_fence() {
-    #[cfg(target_arch = "x86_64")]
-    // SAFETY: a store fence has no memory-safety preconditions.
-    unsafe {
-        std::arch::x86_64::_mm_sfence()
-    };
 }
 
 #[cfg(test)]

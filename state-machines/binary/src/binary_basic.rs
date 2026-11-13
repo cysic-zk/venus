@@ -4,11 +4,11 @@
 
 use std::marker::PhantomData;
 use std::sync::Arc;
+use zisk_common::pad_rows_streaming;
 
 use crate::{binary_constants::*, fill_slots, BinaryBasicTableOp, BinaryInput, BinaryLanes};
 use proofman_common::{AirInstance, FromTrace, ProofmanResult};
 use proofman_fields::PrimeField64;
-use rayon::prelude::*;
 use std::cmp::Ordering as CmpOrdering;
 use zisk_core::zisk_ops::ZiskOp;
 use zisk_pil::{
@@ -129,9 +129,7 @@ macro_rules! impl_binary_basic_row {
                 padding_size: usize,
             ) -> AirInstance<F> {
                 let num_rows = trace.num_rows();
-                trace.buffer[rows_used..num_rows]
-                    .par_iter_mut()
-                    .for_each(|slot| *slot = padding_row);
+                pad_rows_streaming(&mut trace.buffer[rows_used..num_rows], &padding_row);
 
                 let mut air_values = $air_values::<F>::new();
                 air_values.padding_size = F::from_usize(padding_size);
