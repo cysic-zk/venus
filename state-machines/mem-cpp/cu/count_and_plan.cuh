@@ -371,6 +371,13 @@ private:
     uint32_t*      h_n_emits_[N_STREAMS]           = {nullptr};
     uint8_t*       d_pair_state_[N_STREAMS]        = {nullptr};   // RAM pairing state per word across a chunk's pieces
     uint32_t*      h_pot_piece_[N_STREAMS]         = {nullptr};   // a piece's device potential count
+    // A piece's words staged in pinned memory (MAX_WORDS_PER_PIECE each): the chunk lives in the
+    // MO shared memory, which is not registered, and a pageable H2D spins its thread in the driver.
+    uint64_t*      h_words_[N_STREAMS]             = {nullptr};
+    // Recorded after a piece's H2D from h_words_ (blocking-sync, so waiting on it sleeps), and after a
+    // piece's kernels when the host reads their counts.
+    cudaEvent_t    e_words_free_[N_STREAMS]        = {nullptr};
+    cudaEvent_t    e_piece_done_[N_STREAMS]        = {nullptr};
 
     // ─── Ops pool (bump-allocated by add_chunk) ──────────────────────
 

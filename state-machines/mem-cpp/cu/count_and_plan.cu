@@ -1572,6 +1572,9 @@ bool CountAndPlan::setup(void* d_buf, size_t bytes,
     for (int s = 0; s < N_STREAMS; s++) {
         CUDA_CHECK(cudaMallocHost(&h_n_emits_[s], sizeof(uint32_t)));
         CUDA_CHECK(cudaMallocHost(&h_pot_piece_[s], sizeof(uint32_t)));
+        CUDA_CHECK(cudaMallocHost(&h_words_[s], (size_t)MAX_WORDS_PER_PIECE * 8));
+        CUDA_CHECK(cudaEventCreateWithFlags(&e_words_free_[s], cudaEventBlockingSync | cudaEventDisableTiming));
+        CUDA_CHECK(cudaEventCreateWithFlags(&e_piece_done_[s], cudaEventBlockingSync | cudaEventDisableTiming));
     }
 
     pool_enabled_ = (ZISK_MOPS_POOL != 0);
@@ -1756,7 +1759,9 @@ bool CountAndPlan::add_chunk_core_(const uint64_t* words, uint32_t n, uint32_t c
         const uint32_t  pn = pc.sub_nw ? pc.sub_nw : pc.nw;
         if (!add_piece_(pw, pn, c, s, pc.pot, pc.ram, d_chunk_out + emits, true, h_n_emits_[s], h_pot_piece_[s]))
             return false;
-        CUDA_CHECK(cudaStreamSynchronize(streams_[s]));   // the sub-record's words may leave scope
+        // The host reads the piece's counts next; block rather than spin until its kernels are done.
+        CUDA_CHECK(cudaEventRecord(e_piece_done_[s], streams_[s]));
+        CUDA_CHECK(cudaEventSynchronize(e_piece_done_[s]));
         if (*h_pot_piece_[s] != pc.pot) {
             fprintf(stderr, "CountAndPlan::add_chunk ERROR: chunk %u piece %zu: the device found %u potentials, "
                             "the walk %u\n", c, p, *h_pot_piece_[s], pc.pot);
@@ -1782,7 +1787,12 @@ bool CountAndPlan::add_piece_(const uint64_t* words, uint32_t n, uint32_t c, int
     const uint32_t n_sort = ram;
     const int g_sort   = n_sort == 0 ? 0 : (int)((n_sort + BLOCK - 1) / BLOCK);
 
-    CUDA_CHECK(cudaMemcpyAsync(d_words_[s], words, 8ull * n, cudaMemcpyHostToDevice, st));
+    // Through the stream's pinned staging: wait (sleeping) until its previous H2D is done, copy, and
+    // let the H2D run behind the call. The caller's words are no longer read once this returns.
+    CUDA_CHECK(cudaEventSynchronize(e_words_free_[s]));
+    memcpy(h_words_[s], words, 8ull * n);
+    CUDA_CHECK(cudaMemcpyAsync(d_words_[s], h_words_[s], 8ull * n, cudaMemcpyHostToDevice, st));
+    CUDA_CHECK(cudaEventRecord(e_words_free_[s], st));
     CUDA_CHECK(cudaMemsetAsync(d_ram_count_[s],    0, 4, st));
     CUDA_CHECK(cudaMemsetAsync(d_spill_count_[s],  0, 4, st));
     CUDA_CHECK(cudaMemsetAsync(d_spill_status_[s], 0, n, st));
@@ -2188,6 +2198,9 @@ void CountAndPlan::free_pinned_() {
     for (int s = 0; s < N_STREAMS; s++) {
         if (h_n_emits_[s]) { cudaFreeHost(h_n_emits_[s]); h_n_emits_[s] = nullptr; }
         if (h_pot_piece_[s]) { cudaFreeHost(h_pot_piece_[s]); h_pot_piece_[s] = nullptr; }
+        if (h_words_[s]) { cudaFreeHost(h_words_[s]); h_words_[s] = nullptr; }
+        if (e_words_free_[s]) { cudaEventDestroy(e_words_free_[s]); e_words_free_[s] = nullptr; }
+        if (e_piece_done_[s]) { cudaEventDestroy(e_piece_done_[s]); e_piece_done_[s] = nullptr; }
     }
 }
 

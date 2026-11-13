@@ -1523,11 +1523,19 @@ static inline gl64_t *prefetchUnitBase(const DeviceCommitBuffers *d, const Prefe
 // copy engine to other streams. The last chunk may still be in flight on return.
 static void uploadOneChunkInFlight(void *dst, const void *src, uint64_t bytes, cudaStream_t stream) {
     const uint64_t chunk = DeviceCommitBuffers::HOST_UPLOAD_CHUNK_BYTES;
+    // The wait between chunks blocks rather than spins: a stream synchronize under the default
+    // schedule holds a core for the whole upload, on the CPU-bound phase 1 (2.6% of its samples).
+    cudaEvent_t chunkDone = nullptr;
+    if (bytes > chunk) CHECKCUDAERR(cudaEventCreateWithFlags(&chunkDone, cudaEventBlockingSync | cudaEventDisableTiming));
     for (uint64_t off = 0; off < bytes; off += chunk) {
         CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)dst + off, (const uint8_t *)src + off,
                                      std::min(chunk, bytes - off), cudaMemcpyHostToDevice, stream));
-        if (off + chunk < bytes) CHECKCUDAERR(cudaStreamSynchronize(stream));
+        if (off + chunk < bytes) {
+            CHECKCUDAERR(cudaEventRecord(chunkDone, stream));
+            CHECKCUDAERR(cudaEventSynchronize(chunkDone));
+        }
     }
+    if (chunkDone != nullptr) CHECKCUDAERR(cudaEventDestroy(chunkDone));
 }
 
 // Caller MUST hold the zone's mutex. First run of `need` FREE units, or -1. Never evicts: several
