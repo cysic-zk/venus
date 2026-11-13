@@ -105,6 +105,21 @@ static void withGpuHashFamily(uint32_t arity, Fn &&fn)
     }
 }
 
+// Whether a basic air's proof may take its stage-1 tree's upper levels from its slot commit
+// (Cm1UpperTree): a BLAKE3 arity-2 tree stored without its leaf level, high enough that the levels
+// above CM1_UPPER_LEVEL include the proof's last level. VENUS_CM1_TREE_REUSE=0 turns it off.
+static bool cm1UpperTreeEligible(const StarkInfo &si, StreamCommitHash hash)
+{
+    static const bool on = [] {
+        const char *v = getenv("VENUS_CM1_TREE_REUSE");
+        return v == nullptr || std::string(v) != "0";
+    }();
+    const uint64_t nExt = 1ull << si.starkStruct.nBitsExt;
+    return on && hash == StreamCommitHash::Blake3 && si.dropLeafLevel && si.starkStruct.merkleTreeArity == 2 &&
+           (nExt >> (CM1_UPPER_LEVEL + si.starkStruct.lastLevelVerification + 1)) > 0 &&
+           streamCommitUpperWords(nExt, CM1_UPPER_LEVEL) <= CM1_UPPER_LEVEL_MAX_WORDS;
+}
+
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
@@ -1712,7 +1727,7 @@ static bool gpuWitnessFillTrace(DeviceCommitBuffers *d_buffers, StepsParams *par
 }
 
 
-uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
+uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained, void *contributionRoot) {
     // "basic:<airgroup>:<air>", so a profile can tell the airs apart (and their uploads).
     char nvtx_name[48];
     snprintf(nvtx_name, sizeof(nvtx_name), "basic:%lu:%lu", (unsigned long)airgroupId, (unsigned long)airId);
@@ -1925,7 +1940,26 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // tree. Costs a redundant unpack in exactly that case.
     if (customFixedRebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.customFixedDone, 0));
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    // The slot commit's upper stage-1 tree, when it is this proof's: same air, same root (instance ids
+    // repeat across jobs). Taken either way, so a stale entry never outlives its id's next proof.
+    Cm1UpperTree cm1Upper;
+    bool haveCm1Upper = false;
+    if (contributionRoot != nullptr && !selfContained) {
+        std::lock_guard<std::mutex> lk(d_buffers->cm1UpperMutex);
+        auto it = d_buffers->cm1Upper.find(instanceId);
+        if (it != d_buffers->cm1Upper.end()) {
+            haveCm1Upper = it->second.airgroupId == airgroupId && it->second.airId == airId &&
+                           memcmp(it->second.root, contributionRoot, sizeof(it->second.root)) == 0;
+            if (haveCm1Upper) cm1Upper = std::move(it->second);
+            d_buffers->cm1Upper.erase(it);
+        }
+        static const bool logReuse = getenv("VENUS_CM1_TREE_REUSE_LOG") != nullptr;
+        if (logReuse) {
+            zklog.info("cm1 tree of instance " + std::to_string(instanceId) + " [" + std::to_string(airgroupId) + ":" +
+                       std::to_string(airId) + "]: " + (haveCm1Upper ? "upper levels reused" : "rebuilt"));
+        }
+    }
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, selfContained, reuse_const_tree || fixedPrebuilt, fixedPrebuilt, haveCm1Upper ? &cm1Upper : nullptr);
     if (pipeline) {
         // Snapshot the completion into the ring (the per-stream sd fields will be
         // overwritten by the next launch); the harvester writeProofs + fires the callback.
@@ -4007,6 +4041,12 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // An air that scatters nothing holds no count back (a failed commit is fatal, see the caller).
     if (slotCtx.mul == nullptr) mul_note_commit();
 
+    // The levels of this tree the instance's proof will upload instead of rebuilding (Cm1UpperTree).
+    std::vector<uint64_t> upper;
+    if (aii != nullptr && aii->setupCtx != nullptr && cm1UpperTreeEligible(aii->setupCtx->starkInfo, scHash)) {
+        upper.resize(streamCommitUpperWords(1ull << nBitsExt, CM1_UPPER_LEVEL));
+    }
+
     TimerStartGPU(timer, STARK_GPU_COMMIT);
     memcpy(hWidths, colWidths, nCols * sizeof(uint64_t));
     int64_t rc = streamCommitPacked(slotBase, dims, hWidths, packedSrc,
@@ -4014,9 +4054,21 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
                                     dColSource, dColLane, dTable, scHash,
                                     hook, hook ? (void *)&slotCtx : nullptr, &timer,
                                     chunkHook, chunkHook ? (void *)&slotCtx : nullptr,
-                                    slotElems);
+                                    slotElems, upper.empty() ? nullptr : upper.data(), CM1_UPPER_LEVEL);
     TimerStopGPU(timer, STARK_GPU_COMMIT);
     if (rc == 0) memcpy(root, hRoot, STREAM_COMMIT_HOST_ROOT_WORDS * sizeof(uint64_t));
+    if (rc == 0) {
+        std::lock_guard<std::mutex> lk(d_buffers->cm1UpperMutex);
+        if (upper.empty()) {
+            d_buffers->cm1Upper.erase(instanceId);
+        } else {
+            Cm1UpperTree &e = d_buffers->cm1Upper[instanceId];
+            e.airgroupId = airgroupId;
+            e.airId = airId;
+            memcpy(e.root, hRoot, sizeof(e.root));
+            e.words = std::move(upper);
+        }
+    }
     closeStreamTimer(timer, instanceId, airgroupId, airId, false);
     releaseRegion();
     return rc;
