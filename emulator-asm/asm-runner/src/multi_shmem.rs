@@ -242,6 +242,35 @@ impl<H: AsmShmemHeader> AsmMultiShmem<H> {
 
             let file_size = if file_idx == 0 { self.initial_size } else { self.incremental_size };
 
+            // The producer decides how many files get mapped: a MAP_FIXED mapping past the
+            // reservation would replace unrelated mappings of this process, and pages past the
+            // end of the backing object raise SIGBUS when touched.
+            if offset.checked_add(file_size).is_none_or(|end| end > self.reserved_size) {
+                close(fd);
+                return Err(anyhow!(
+                    "Shared memory '{}' does not fit in the {} bytes reserved for '{}'",
+                    file_name,
+                    self.reserved_size,
+                    self.base_name
+                ));
+            }
+            match shmem_sys::object_size(fd) {
+                Ok(object_size) if object_size >= file_size => {}
+                Ok(object_size) => {
+                    close(fd);
+                    return Err(anyhow!(
+                        "Shared memory '{}' is smaller than its mapping ({} < {} bytes)",
+                        file_name,
+                        object_size,
+                        file_size
+                    ));
+                }
+                Err(err) => {
+                    close(fd);
+                    return Err(anyhow!("fstat('{}') failed: {}", file_name, err));
+                }
+            }
+
             let target_addr = self.reserved_ptr.add(offset);
 
             let mut flags = MAP_SHARED | libc::MAP_FIXED;
@@ -303,6 +332,57 @@ impl<H: AsmShmemHeader> AsmMultiShmem<H> {
     pub fn total_mapped_size(&self) -> usize {
         self.total_mapped_size
     }
+
+    /// Address from which a chunk may run past the mapped extent, `margin` bytes before its end:
+    /// a reader at or past it checks for new files before reading the next chunk.
+    pub fn growth_threshold(&self, margin: usize) -> usize {
+        self.reserved_ptr as usize + self.total_mapped_size.saturating_sub(margin)
+    }
+
+    /// Reads the chunk header at `*cursor` and the `u64` words it says follow it, then advances
+    /// `*cursor` past both.
+    ///
+    /// The sizes come from the producer: this fails, instead of reading past it, unless header
+    /// and payload lie within the extent the producer has advertised and this reader has mapped.
+    pub fn read_chunk<T: AsmShmemChunk>(&self, cursor: &mut *const T) -> Result<(T, &[u64])> {
+        let base = self.reserved_ptr as usize;
+        let end = base + self.total_mapped_size;
+        let header_start = *cursor as usize;
+        if header_start % align_of::<T>() != 0 {
+            return Err(anyhow!("Misaligned chunk header in multi-shmem '{}'", self.base_name));
+        }
+        let payload_start = header_start
+            .checked_add(size_of::<T>())
+            .filter(|&header_end| header_start >= base && header_end <= end)
+            .ok_or_else(|| anyhow!("Chunk header exceeds multi-shmem '{}'", self.base_name))?;
+        // SAFETY: the header lies inside the mapped region, aligned (both checked above), and
+        // `AsmShmemChunk` types are valid for any bytes.
+        let chunk = unsafe { (header_start as *const T).read() };
+
+        let words = chunk.payload_words();
+        let len = usize::try_from(words)
+            .ok()
+            .filter(|&len| len <= (end - payload_start) / size_of::<u64>())
+            .ok_or_else(|| {
+                anyhow!("Chunk payload of {} words exceeds multi-shmem '{}'", words, self.base_name)
+            })?;
+        // SAFETY: the payload lies inside the mapped region checked above (8-aligned, as the
+        // header is a whole number of words), which stays mapped while `self` is borrowed.
+        let payload = unsafe { std::slice::from_raw_parts(payload_start as *const u64, len) };
+
+        *cursor = payload.as_ptr_range().end as *const T;
+        Ok((chunk, payload))
+    }
+}
+
+/// A chunk header the producer writes into an [`AsmMultiShmem`], followed by `u64` words.
+///
+/// # Safety
+/// Implementors are `repr(C)` structs of `u64`s (a whole number of words, 8-aligned): any bytes are
+/// a valid value, so a header can be read from memory another process writes.
+pub(crate) unsafe trait AsmShmemChunk {
+    /// Number of `u64` words that follow the header.
+    fn payload_words(&self) -> u64;
 }
 
 #[cfg(test)]
@@ -365,6 +445,44 @@ mod tests {
         assert!(!m.mapped_ptr().is_null());
         assert!(!m.data_ptr().is_null());
         drop(m); // Frees the reserved range but leaves the segment linked: segments are shared.
+        unlink_segment(&file0);
+    }
+
+    #[repr(C)]
+    struct TestChunk {
+        payload: u64,
+    }
+    // SAFETY: a `repr(C)` struct of one `u64`.
+    unsafe impl AsmShmemChunk for TestChunk {
+        fn payload_words(&self) -> u64 {
+            self.payload
+        }
+    }
+
+    /// The producer's sizes are not trusted: a chunk whose payload runs past the mapped extent is
+    /// an error, not a read past the mapping.
+    #[test]
+    fn read_chunk_stays_inside_the_mapping() {
+        let base = format!("ZISK_unittest_multichunk_{}", std::process::id());
+        let initial = 4096usize;
+        let file0 = format!("{base}_0");
+        create_segment(&file0, initial);
+        let header = size_of::<TestHeader>();
+        {
+            let w = ShmemWriter::new(&file0, initial, true).unwrap();
+            w.write_u64_at(0, initial as u64).unwrap();
+            // A chunk with 2 words, then one claiming the rest of the mapping plus one word.
+            w.write_u64_at(header, 2).unwrap();
+            let next = header + 3 * 8;
+            w.write_u64_at(next, ((initial - next) / 8) as u64).unwrap();
+        }
+        let m = AsmMultiShmem::<TestHeader>::open_and_map(&base, initial, initial, initial, true, false)
+            .unwrap();
+        let mut cursor = m.data_ptr() as *const TestChunk;
+        let (chunk, payload) = m.read_chunk(&mut cursor).unwrap();
+        assert_eq!((chunk.payload, payload.len()), (2, 2));
+        assert!(m.read_chunk(&mut cursor).is_err());
+        drop(m);
         unlink_segment(&file0);
     }
 

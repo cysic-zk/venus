@@ -121,13 +121,7 @@ impl AsmRunnerMT {
         const MAX_BYTES_MTRACE_STEP: usize = MAX_BYTES_DIRECT_MTRACE + MAX_MTRACE_REGS_ACCESS_SIZE;
 
         let threshold_bytes = (chunk_size as usize * MAX_BYTES_MTRACE_STEP) + MAX_TRACE_CHUNK_INFO;
-        let mut threshold = unsafe {
-            preloaded
-                .output_shmem
-                .mapped_ptr()
-                .add(preloaded.output_shmem.total_mapped_size() - threshold_bytes)
-                as *const AsmMTChunk
-        };
+        let mut threshold = preloaded.output_shmem.growth_threshold(threshold_bytes);
 
         // Pre-allocate reasonable initial capacity to avoid early reallocations
         let mut emu_traces: Vec<Arc<EmuTrace>> = Vec::with_capacity(1024);
@@ -154,16 +148,11 @@ impl AsmRunnerMT {
                     fence(Ordering::Acquire);
 
                     // Check if we need to map additional shared memory files.
-                    if data_ptr >= threshold {
+                    if data_ptr as usize >= threshold {
                         match preloaded.output_shmem.check_size_changed() {
                             Ok(true) => {
                                 // Update threshold based on new total mapped size
-                                threshold = unsafe {
-                                    preloaded.output_shmem.mapped_ptr().add(
-                                        preloaded.output_shmem.total_mapped_size()
-                                            - threshold_bytes,
-                                    ) as *const AsmMTChunk
-                                };
+                                threshold = preloaded.output_shmem.growth_threshold(threshold_bytes);
                             }
                             Ok(false) => {}
                             Err(e) => {
@@ -175,7 +164,16 @@ impl AsmRunnerMT {
                         }
                     }
 
-                    let emu_trace = Arc::new(AsmMTChunk::to_emu_trace(&mut data_ptr));
+                    let (chunk, mem_reads) = match preloaded.output_shmem.read_chunk(&mut data_ptr) {
+                        Ok(read) => read,
+                        Err(e) => {
+                            signal_runner_failure();
+                            break Err(e).context("Malformed MT chunk in shared memory");
+                        }
+                    };
+                    // SAFETY: the traces borrow the shared memory, which stays mapped (it only
+                    // grows) while they are in use.
+                    let emu_trace = Arc::new(unsafe { AsmMTChunk::to_emu_trace(chunk, mem_reads) });
                     let should_exit = emu_trace.end;
 
                     emu_traces.push(emu_trace);

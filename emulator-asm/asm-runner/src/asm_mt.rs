@@ -44,26 +44,28 @@ pub(crate) struct AsmMTChunk {
     pub mem_reads_size: u64,
 }
 
+// SAFETY: `AsmMTChunk` is a `repr(C)` struct of `u64`s.
+unsafe impl crate::AsmShmemChunk for AsmMTChunk {
+    fn payload_words(&self) -> u64 {
+        self.mem_reads_size
+    }
+}
+
 impl AsmMTChunk {
-    /// Create an `OutputChunk` from a pointer.
+    /// The `EmuTrace` of a chunk header read by [`AsmMultiShmem::read_chunk`] and its memory
+    /// reads, which it borrows from the shared memory without copying.
     ///
     /// # Safety
-    /// This function is unsafe because it reads from a raw pointer in shared memory.
-    pub fn to_emu_trace(mapped_ptr: &mut *const AsmMTChunk) -> EmuTrace {
-        // Read chunk data
-        let chunk = unsafe { std::ptr::read(*mapped_ptr) };
-        *mapped_ptr = unsafe { mapped_ptr.add(1) };
-
+    /// `mem_reads` must stay mapped for as long as the returned trace is used: its lifetime is
+    /// extended to `'static`.
+    ///
+    /// [`AsmMultiShmem::read_chunk`]: crate::AsmMultiShmem::read_chunk
+    pub unsafe fn to_emu_trace(chunk: AsmMTChunk, mem_reads: &[u64]) -> EmuTrace {
         // Zero-copy: borrow mem_reads directly from shared memory.
-        // SAFETY: Caller must ensure shared memory outlives EmuTrace usage
-        let mem_reads_ptr = *mapped_ptr as *const u64;
-        let mem_reads_len = chunk.mem_reads_size as usize;
+        // SAFETY: the caller keeps the shared memory mapped while the trace is in use.
         let mem_reads: Cow<'static, [u64]> = unsafe {
-            Cow::Borrowed(&*std::ptr::slice_from_raw_parts(mem_reads_ptr, mem_reads_len))
+            Cow::Borrowed(&*std::ptr::slice_from_raw_parts(mem_reads.as_ptr(), mem_reads.len()))
         };
-
-        // Advance the pointer after reading memory reads
-        *mapped_ptr = unsafe { (*mapped_ptr as *mut u64).add(mem_reads_len) as *const AsmMTChunk };
 
         let mut registers = [0u64; REGS_IN_MAIN_TOTAL_NUMBER];
         registers[REGS_IN_MAIN_FROM..].copy_from_slice(&chunk.registers[..REGS_IN_MAIN_TO]);

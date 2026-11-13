@@ -28,6 +28,13 @@ pub(crate) struct AsmMOChunk {
     pub mem_ops_size: u64,
 }
 
+// SAFETY: `AsmMOChunk` is a `repr(C)` struct of `u64`s.
+unsafe impl crate::AsmShmemChunk for AsmMOChunk {
+    fn payload_words(&self) -> u64 {
+        self.mem_ops_size
+    }
+}
+
 /// Type of buffer used on GPU MO count and plan.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum GpuBufferSource {

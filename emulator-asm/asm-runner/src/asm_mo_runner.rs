@@ -442,13 +442,7 @@ impl AsmRunnerMO {
         let threshold_bytes = (chunk_size as usize * MAX_BYTES_MO_STEP)
             + MAX_TRACE_CHUNK_INFO
             + zisk_core::MAX_MO_INIT_DATA_MARGIN as usize;
-        let mut threshold = unsafe {
-            preloaded
-                .output_shmem
-                .mapped_ptr()
-                .add(preloaded.output_shmem.total_mapped_size() - threshold_bytes)
-                as *const AsmMOChunk
-        };
+        let mut threshold = preloaded.output_shmem.growth_threshold(threshold_bytes);
 
         let mut on_runner_failure = Some(on_runner_failure);
         let mut signal_runner_failure = || {
@@ -470,16 +464,11 @@ impl AsmRunnerMO {
                     fence(Ordering::Acquire);
 
                     // Check if we need to map additional shared memory files.
-                    if data_ptr >= threshold {
+                    if data_ptr as usize >= threshold {
                         match preloaded.output_shmem.check_size_changed() {
                             Ok(true) => {
                                 // Update threshold based on new total mapped size
-                                threshold = unsafe {
-                                    preloaded.output_shmem.mapped_ptr().add(
-                                        preloaded.output_shmem.total_mapped_size()
-                                            - threshold_bytes,
-                                    ) as *const AsmMOChunk
-                                };
+                                threshold = preloaded.output_shmem.growth_threshold(threshold_bytes);
                                 #[cfg(gpu)]
                                 if let Some(ref gpu_count_and_plan) = gpu_count_and_plan_opt {
                                     register_mo_shmem_pinned(
@@ -499,34 +488,33 @@ impl AsmRunnerMO {
                         }
                     }
 
-                    let chunk = unsafe { std::ptr::read(data_ptr) };
-
-                    data_ptr = unsafe { data_ptr.add(1) };
+                    let (chunk, mem_ops) = match preloaded.output_shmem.read_chunk(&mut data_ptr) {
+                        Ok(read) => read,
+                        Err(e) => {
+                            signal_runner_failure();
+                            break Err(e).context("Malformed MO chunk in shared memory");
+                        }
+                    };
+                    let mem_ops_ptr = mem_ops.as_ptr() as *const c_void;
 
                     stats_mark!(_stats, &_runner_scope, "MO_CHUNK_DONE", 0);
 
                     // Feed this chunk to whichever planner is active
                     #[cfg(gpu)]
                     if let Some(ref gpu_count_and_plan) = gpu_count_and_plan_opt {
-                        fed_chunks.push((data_ptr as *const c_void, chunk.mem_ops_size));
-                        if !gpu_count_and_plan
-                            .add_chunk(chunk.mem_ops_size, data_ptr as *const c_void)
-                        {
+                        fed_chunks.push((mem_ops_ptr, chunk.mem_ops_size));
+                        if !gpu_count_and_plan.add_chunk(chunk.mem_ops_size, mem_ops_ptr) {
                             tracing::warn!("[gpu] the planner rejected chunk {} (n={}); the block is planned on the CPU", fed_chunks.len() - 1, chunk.mem_ops_size);
                         }
                     } else {
-                        mem_planner.add_chunk(chunk.mem_ops_size, data_ptr as *const c_void);
+                        mem_planner.add_chunk(chunk.mem_ops_size, mem_ops_ptr);
                     }
                     #[cfg(not(gpu))]
-                    mem_planner.add_chunk(chunk.mem_ops_size, data_ptr as *const c_void);
+                    mem_planner.add_chunk(chunk.mem_ops_size, mem_ops_ptr);
 
                     if chunk.end == 1 {
                         break Ok(0);
                     }
-
-                    data_ptr = unsafe {
-                        (data_ptr as *mut u64).add(chunk.mem_ops_size as usize) as *const AsmMOChunk
-                    };
                 }
                 Err(stop) => {
                     error!("MO chunk stream on '{sem_chunk_done_name}' stopped: {stop}");

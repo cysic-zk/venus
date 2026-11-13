@@ -81,9 +81,21 @@ impl<H: AsmShmemHeader> AsmShmem<H> {
             }
         }
 
-        if allocated_size == 0 {
+        // The size comes from the producer: it must cover the header, and pages past the end of
+        // the backing object raise SIGBUS when touched.
+        let object_size = match shmem_sys::object_size(fd) {
+            Ok(size) => size,
+            Err(e) => {
+                unsafe { close(fd) };
+                return Err(anyhow::anyhow!("fstat('{name}') failed: {e}"));
+            }
+        };
+        if allocated_size < size_header || allocated_size > object_size {
             unsafe { close(fd) };
-            return Err(anyhow::anyhow!("Shared memory '{}' has zero allocated size", name));
+            return Err(anyhow::anyhow!(
+                "Shared memory '{name}' advertises {allocated_size} bytes, outside \
+                 [{size_header}, {object_size}] (its header and backing object)"
+            ));
         }
 
         // Remap the full region now that the real size is known.

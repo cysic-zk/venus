@@ -46,6 +46,28 @@ pub(crate) fn open(_name: &str, _flags: i32) -> io::Result<i32> {
     ))
 }
 
+/// Size in bytes of the shared-memory object behind `fd`: a mapping past its end raises SIGBUS
+/// where it is touched.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub(crate) fn object_size(fd: i32) -> io::Result<usize> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `fstat` writes a `stat` into the buffer on success, which is the only case read.
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let size = unsafe { stat.assume_init() }.st_size;
+    usize::try_from(size)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("object size {size}")))
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub(crate) fn object_size(_fd: i32) -> io::Result<usize> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "POSIX shared memory is only supported on linux-x86_64",
+    ))
+}
+
 /// `mmap` `size` bytes of `fd` with protection `prot`.
 ///
 /// When `lock` is true the mapping uses `MAP_LOCKED` so its pages stay resident
