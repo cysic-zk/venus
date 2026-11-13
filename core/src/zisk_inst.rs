@@ -126,45 +126,54 @@ pub const POSEIDON2_KOALABEAR_OP_TYPE_ID: u32 = ZiskOperationType::Poseidon2Koal
 /// a and b are loaded from the respective sources specified in the instruction.
 /// c is stored according to the destination specified in the instruction.
 /// flag meaning is operation-dependant.
+///
+/// The emulator replays fetch one instruction per step, so the fields are laid out from hottest to
+/// coldest on cache lines: a step reads only the first two (`paddr` and `index` are read only by the
+/// unpacked Main row and by the Rust ROM collector), and the ROM-building and debugging fields come
+/// last.
 #[derive(Debug, Clone)]
+#[repr(C, align(64))]
 pub struct ZiskInst {
-    pub paddr: u64,
-    pub store_pc: bool,
-    pub store_use_sp: bool,
+    pub func: fn(&mut InstContext) -> (),
+    pub a_src: u64,
+    pub a_offset_imm0: u64,
+    pub a_use_sp_imm1: u64,
+    pub b_src: u64,
+    pub b_offset_imm0: u64,
+    pub b_use_sp_imm1: u64,
     pub store: u64,
     pub store_offset: i64,
-    pub set_pc: bool,
-    pub is_precompiled: bool,
-    // #[cfg(feature = "sp")]
-    // pub set_sp: bool,
-    pub ind_width: u64,
-    // #[cfg(feature = "sp")]
-    // pub inc_sp: u64,
-    pub end: bool,
-    pub a_src: u64,
-    pub a_use_sp_imm1: u64,
-    pub a_offset_imm0: u64,
-    pub b_src: u64,
-    pub b_use_sp_imm1: u64,
-    pub b_offset_imm0: u64,
     pub jmp_offset1: i64,
     pub jmp_offset2: i64,
-    pub is_external_op: bool,
-    pub op: u8,
-    pub func: fn(&mut InstContext) -> (),
-    pub op_str: &'static str,
-    pub op_type: ZiskOperationType,
-    pub verbose: String,
-    pub m32: bool,
     pub input_size: u64,
+    pub ind_width: u64,
     pub sorted_pc_list_index: usize,
-    pub riscv_inst: Option<String>,
+    // #[cfg(feature = "sp")]
+    // pub inc_sp: u64,
+    pub op_type: ZiskOperationType,
+    pub op: u8,
+    pub store_pc: bool,
+    pub store_use_sp: bool,
+    pub set_pc: bool,
+    // #[cfg(feature = "sp")]
+    // pub set_sp: bool,
+    pub end: bool,
+    pub m32: bool,
+    pub is_external_op: bool,
+    pub is_precompiled: bool,
+    pub paddr: u64,
     pub index: u64, // internal field used for tracking the instruction creation order in the ROM
+    pub op_str: &'static str,
+    pub verbose: String,
+    pub riscv_inst: Option<String>,
     pub next_internal_inst: Option<u64>, // connection to next internal odd instruction, if any
     pub external_ref_addr: Option<u64>, // external address of the instruction, if any
     pub meta_rs1: Option<u8>, // meta information used for callstack.
     pub meta_rd: Option<u8>, // meta information used for callstack.
 }
+
+// The fields a replay step reads fill exactly the first two cache lines.
+const _: () = assert!(std::mem::offset_of!(ZiskInst, paddr) == 2 * 64);
 
 /// Default constructor
 /// Initializes all fields to 0
