@@ -266,6 +266,14 @@ impl ZiskStdin {
         let mut len_bytes = [0u8; 8];
         cursor.read_exact(&mut len_bytes)?;
         let len = usize::from_le_bytes(len_bytes);
+        // The length comes from the data: a corrupt prefix must not size the allocation.
+        let left = buf.len() - cursor.position() as usize;
+        if len > left {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("stdin frame of {len} bytes with {left} bytes left"),
+            ));
+        }
         let mut data = vec![0u8; len];
         cursor.read_exact(&mut data)?;
         // Padding is at most 7 bytes, so it reads into a stack buffer.
@@ -284,6 +292,15 @@ impl ZiskStdin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A length prefix larger than what is left is an error, not an allocation of that size.
+    #[test]
+    fn a_frame_longer_than_the_data_is_refused() {
+        let mut data = (u64::MAX / 2).to_le_bytes().to_vec();
+        data.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let stdin = ZiskStdin::from_vec(data);
+        assert!(stdin.read_raw().is_err());
+    }
 
     #[test]
     fn from_vec_round_trips_a_single_frame() {
