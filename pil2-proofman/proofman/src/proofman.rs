@@ -3774,7 +3774,7 @@ where
             }
         }
 
-        let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
+        let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64)?;
         tracing::info!(
             "··· Global challenge: [{}, {}, {}]",
             global_challenge[0],
@@ -5206,7 +5206,7 @@ where
                         aggregated: true,
                     })
                     .collect();
-                let global_challenge_calculated = calculate_global_challenge(&self.pctx, &recomputed_contributions);
+                let global_challenge_calculated = calculate_global_challenge(&self.pctx, &recomputed_contributions)?;
 
                 if global_challenge_calculated != *global_challenge {
                     let error =

@@ -1,5 +1,5 @@
 use proofman_curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
-use proofman_common::{CurveType, ProofCtx};
+use proofman_common::{CurveType, ProofCtx, ProofmanError, ProofmanResult};
 use proofman_fields::{hash_state, new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 
 /// Max transcript width across families
@@ -115,11 +115,32 @@ where
     per_airgroup
 }
 
-pub fn calculate_global_challenge<F>(pctx: &ProofCtx<F>, all_partial_contributions_u64: &[ContributionsInfo]) -> [F; 3]
+pub fn calculate_global_challenge<F>(
+    pctx: &ProofCtx<F>,
+    all_partial_contributions_u64: &[ContributionsInfo],
+) -> ProofmanResult<[F; 3]>
 where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
+    // Contributions come from every worker of the job: one of the wrong shape would make the
+    // aggregation below index past its vector (or past the lattice sum) and abort the process.
+    let n_airgroups = pctx.global_info.air_groups.len();
+    let width = contribution_width(pctx);
+    for c in all_partial_contributions_u64 {
+        if c.airgroup_id >= n_airgroups || c.challenge.len() != width {
+            return Err(ProofmanError::InvalidProof(format!(
+                "contribution of worker {} for airgroup {} has {} values; expected an airgroup below {} \
+                 and {} values",
+                c.worker_index,
+                c.airgroup_id,
+                c.challenge.len(),
+                n_airgroups,
+                width
+            )));
+        }
+    }
+
     let mut transcript = new_transcript::<F>(&pctx.global_info.hash);
 
     transcript.put(&pctx.get_publics());
@@ -130,7 +151,6 @@ where
     }
 
     // One aggregated contribution per airgroup, in airgroup order, as in the circuit.
-    let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup_id in 0..n_airgroups {
         let group: Vec<Vec<F>> = all_partial_contributions_u64
             .iter()
@@ -144,7 +164,16 @@ where
     let mut global_challenge = [F::ZERO; 3];
     transcript.get_field(&mut global_challenge);
 
-    global_challenge
+    Ok(global_challenge)
+}
+
+/// Field elements one contribution holds: a curve point's two quintic coordinates, or the
+/// lattice's size.
+fn contribution_width<F: PrimeField64>(pctx: &ProofCtx<F>) -> usize {
+    match pctx.global_info.curve {
+        CurveType::EcGFp5 | CurveType::EcMasFp5 => 10,
+        CurveType::None => pctx.global_info.lattice_size.unwrap_or(0),
+    }
 }
 
 fn identity_contribution<F: PrimeField64>(pctx: &ProofCtx<F>) -> Vec<F> {
