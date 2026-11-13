@@ -4916,7 +4916,15 @@ where
             let mut received = self.received_agg_proofs.write().unwrap();
 
             for proof in agg_proofs {
-                let airgroup_vec = &mut received[proof.airgroup_id as usize];
+                // The id comes from a peer: out of range, it would panic here with the lock held
+                // and poison it for every later job.
+                let Some(airgroup_vec) = received.get_mut(proof.airgroup_id as usize) else {
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
+                        "Received aggregated proofs for unknown airgroup {}",
+                        proof.airgroup_id
+                    ))));
+                    break;
+                };
 
                 for &worker_idx in &proof.worker_indexes {
                     if airgroup_vec.contains(&worker_idx) {
@@ -4977,7 +4985,13 @@ where
         for proof in agg_proofs {
             {
                 let received = self.received_agg_proofs.read().unwrap();
-                let airgroup_vec = &received[proof.airgroup_id as usize];
+                let Some(airgroup_vec) = received.get(proof.airgroup_id as usize) else {
+                    self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
+                        "Received aggregated proof for unknown airgroup {}",
+                        proof.airgroup_id
+                    ))));
+                    break;
+                };
 
                 for &worker_idx in &proof.worker_indexes {
                     if !airgroup_vec.contains(&worker_idx) {
