@@ -139,6 +139,12 @@ const F_MOPS_BLOCK_LENGTH_SHIFT: u64 = 36;
 // Non-block headers: `(step_in_chunk << 2) | slot` at bits 38-57. Block records carry the same
 // field, at the same position, in their payload word.
 const F_MOPS_STEP_SHIFT: u64 = 38;
+/// Where the step in the chunk starts in a header: past the 2 slot bits.
+const F_MOPS_STEP_IN_CHUNK_SHIFT: u64 = F_MOPS_STEP_SHIFT + 2;
+/// `rorx reg, step_count_down, F_MOPS_STEP_ROR` is `step_count_down << F_MOPS_STEP_IN_CHUNK_SHIFT`
+/// while the count down (at most the chunk size) stays below 2^F_MOPS_STEP_ROR.
+const F_MOPS_STEP_ROR: u64 = 64 - F_MOPS_STEP_IN_CHUNK_SHIFT;
+const _: () = assert!(crate::CHUNK_SIZE_BITS < F_MOPS_STEP_ROR as usize);
 /// Trace space the memory-ops runner keeps for the initialised-data records at the ROM entry,
 /// two words per data word (constants.hpp MAX_MO_INIT_DATA_MARGIN).
 pub const MAX_MO_INIT_DATA_MARGIN: u64 = 64 << 20;
@@ -296,6 +302,9 @@ pub struct ZiskAsmContext {
     branch_table: BranchTableExtents,
     /// Access widths whose `guest_last_<width>` bound the generated code compares against.
     guest_widths: std::collections::BTreeSet<u64>,
+    /// `mask | slot << F_MOPS_STEP_SHIFT` of every memory-ops header the code completes from a
+    /// `mops_hdr_<base>` word, which emu_start sets to `base + (chunk_size << F_MOPS_STEP_IN_CHUNK_SHIFT)`.
+    mops_header_bases: std::collections::BTreeSet<u64>,
     mops_pending_writes: Vec<MopsPendingWrite>,
     mem_mops_base: String,
     pc: u64,
@@ -940,6 +949,8 @@ impl ZiskRom2Asm {
             GUEST_MEMORY_END - 8,
             ctx.comment_str("last start of an 8-byte guest access")
         );
+        // The memory-ops header words are set here, once the code below has said which it uses.
+        let mops_header_init_at = code.len();
 
         *code += &format!("\n{}\n", ctx.comment_str("ZisK registers initialization"));
         *code += &format!("\txor {}, {} {}\n", REG_A, REG_A, ctx.comment_str("a = 0"));
@@ -1303,6 +1314,24 @@ impl ZiskRom2Asm {
         *code += "\n.section .data\n.align 8\n";
         for width in &ctx.guest_widths {
             *code += &format!("guest_last_{width}: .quad 0x{:x}\n", GUEST_MEMORY_END - width);
+        }
+
+        // One header word per memory-ops base the code uses, set by emu_start for the chunk size of
+        // the run (mops_add_step_header).
+        for base in &ctx.mops_header_bases {
+            *code += &format!("mops_hdr_{base:x}: .quad 0\n");
+        }
+        if !ctx.mops_header_bases.is_empty() {
+            let mut init =
+                ctx.full_line_comment("Memory-ops header words for this chunk size".to_string());
+            init += &format!("\tmov {REG_AUX}, qword {}[chunk_size]\n", ctx.ptr);
+            init += &format!("\tshl {REG_AUX}, {F_MOPS_STEP_IN_CHUNK_SHIFT}\n");
+            for base in &ctx.mops_header_bases {
+                init += &format!("\tmov {REG_VALUE}, 0x{base:x}\n");
+                init += &format!("\tadd {REG_VALUE}, {REG_AUX}\n");
+                init += &format!("\tmov qword {}[mops_hdr_{base:x}], {REG_VALUE}\n", ctx.ptr);
+            }
+            code.insert_str(mops_header_init_at, &init);
         }
 
         #[cfg(debug_assertions)]
@@ -8332,21 +8361,35 @@ impl ZiskRom2Asm {
 
     /// `reg = ((chunk_size - step_count_down) << 2 | slot) << F_MOPS_STEP_SHIFT`.
     fn mops_step_bits(ctx: &mut ZiskAsmContext, code: &mut String, reg: &str, slot: u64) {
+        let base = slot << F_MOPS_STEP_SHIFT;
+        ctx.mops_header_bases.insert(base);
         *code += &format!(
-            "\tmov {reg}, qword {}[chunk_size] {}\n",
+            "\trorx {reg}, {REG_STEP}, {F_MOPS_STEP_ROR} {}\n",
+            ctx.comment_str("step bits = count down << step shift")
+        );
+        *code += &format!("\tneg {reg} {}\n", ctx.comment_str("step bits = -step bits"));
+        *code += &format!(
+            "\tadd {reg}, qword {}[mops_hdr_{base:x}] {}\n",
             ctx.ptr,
-            ctx.comment_str("step bits = chunk_size")
+            ctx.comment_str("step bits += slot | chunk_size << step shift")
         );
-        *code +=
-            &format!("\tsub {reg}, {REG_STEP} {}\n", ctx.comment_str("step bits -= count down"));
-        *code += &format!("\tshl {reg}, 2 {}\n", ctx.comment_str("step bits <<= 2"));
-        if slot != 0 {
-            *code += &format!("\tor {reg}, {slot} {}\n", ctx.comment_str("step bits |= slot"));
-        }
+    }
+
+    /// `reg += base + ((chunk_size - step_count_down) << F_MOPS_STEP_IN_CHUNK_SHIFT)`: the step
+    /// field and `base` (mask and slot) added to the address in `reg`, below 2^32 since every
+    /// access is range checked first, so the sum is the bitwise or. Uses `REG_AUX` as scratch.
+    fn mops_add_step_header(ctx: &mut ZiskAsmContext, code: &mut String, reg: &str, base: u64) {
+        ctx.mops_header_bases.insert(base);
         *code += &format!(
-            "\tshl {reg}, {F_MOPS_STEP_SHIFT} {}\n",
-            ctx.comment_str("step bits <<= F_MOPS_STEP_SHIFT")
+            "\tadd {reg}, qword {}[mops_hdr_{base:x}] {}\n",
+            ctx.ptr,
+            ctx.comment_str("header += mask | slot | chunk_size << step shift")
         );
+        *code += &format!(
+            "\trorx {REG_AUX}, {REG_STEP}, {F_MOPS_STEP_ROR} {}\n",
+            ctx.comment_str("aux = count down << step shift")
+        );
+        *code += &format!("\tsub {reg}, {REG_AUX} {}\n", ctx.comment_str("header -= aux"));
     }
 
     /// Stores a read record (the header word only) or a block record (`payload` is a register
@@ -8434,29 +8477,33 @@ impl ZiskRom2Asm {
         mops_mask: u64,
         slot: u64,
     ) {
+        if ctx.light_mops() {
+            if ctx.address_is_constant {
+                *code += &format!(
+                    "\tmov {reg_address}, 0x{:x} {}\n",
+                    mops_mask + ctx.address_constant_value,
+                    ctx.comment_str("header = constant mem op")
+                );
+            } else {
+                *code += &format!(
+                    "\tmov {REG_AUX}, 0x{mops_mask:x} {}\n",
+                    ctx.comment_str("aux = mem op mask")
+                );
+                *code += &format!(
+                    "\tor {reg_address}, {REG_AUX} {}\n",
+                    ctx.comment_str("header |= mem op mask")
+                );
+            }
+            return;
+        }
         if ctx.address_is_constant {
             *code += &format!(
                 "\tmov {reg_address}, 0x{:x} {}\n",
-                mops_mask + ctx.address_constant_value,
-                ctx.comment_str("header = constant mem op")
-            );
-        } else {
-            *code += &format!(
-                "\tmov {REG_AUX}, 0x{mops_mask:x} {}\n",
-                ctx.comment_str("aux = mem op mask")
-            );
-            *code += &format!(
-                "\tor {reg_address}, {REG_AUX} {}\n",
-                ctx.comment_str("header |= mem op mask")
+                ctx.address_constant_value,
+                ctx.comment_str("header = constant address")
             );
         }
-        if !ctx.light_mops() {
-            Self::mops_step_bits(ctx, code, REG_AUX, slot);
-            *code += &format!(
-                "\tor {reg_address}, {REG_AUX} {}\n",
-                ctx.comment_str("header |= step bits")
-            );
-        }
+        Self::mops_add_step_header(ctx, code, reg_address, mops_mask | (slot << F_MOPS_STEP_SHIFT));
     }
 
     fn read_mops_mask(ctx: &ZiskAsmContext, width: u64) -> u64 {
