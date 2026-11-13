@@ -871,6 +871,10 @@ struct DeviceCommitBuffers
     // Pinned per slot (pageable copies block the driver): root, column widths, GPU-witness
     // input bounce. [n_gpus * streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
     uint64_t *streamCommitHost = nullptr;
+    // Pinned per slot: the stage-1 tree's upper levels a slot commit keeps (Cm1UpperTree). Pageable,
+    // the D2H would spin its thread on the whole commit. [n_gpus * streamCommitSlots *
+    // CM1_UPPER_LEVEL_MAX_WORDS]
+    uint64_t *streamCommitUpperHost = nullptr;
     // Per GPU: shared hold of that GPU's overlapped legacy streams. The first in-flight slot commit
     // sets every overlapped stream's `slotHeld` flag, the last clears them. `cv` is signalled
     // when the quiesce lifts and when the last in-flight commit leaves.
