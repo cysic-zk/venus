@@ -32,13 +32,16 @@ impl ZiskBuildToolchain {
                 PathBuf::from(build_dir).join("rust")
             }
             Err(_) => {
-                let temp_dir = std::env::temp_dir();
-                let dir = temp_dir.join("zisk-rust");
-                if dir.exists() {
-                    std::fs::remove_dir_all(&dir)?;
-                }
+                // A private checkout (0700, unpredictable name): a fixed path in the shared
+                // temporary directory can be pre-created or swapped by another user of the host,
+                // and the toolchain is built from it and linked in place, so it is kept.
+                let dir = tempfile::Builder::new()
+                    .prefix("zisk-rust-")
+                    .tempdir()
+                    .context("while creating the rust checkout directory")?
+                    .keep();
 
-                println!("No ZISK_BUILD_DIR detected, cloning rust.");
+                println!("No ZISK_BUILD_DIR detected, cloning rust into {}.", dir.display());
                 let repo_url = "https://github.com/0xPolygonHermez/rust";
 
                 // Determine the ref to checkout: tag takes precedence over branch
@@ -51,9 +54,9 @@ impl ZiskBuildToolchain {
                         "--depth=1",
                         "--single-branch",
                         &format!("--branch={}", git_ref),
-                        "zisk-rust",
+                        ".",
                     ])
-                    .current_dir(&temp_dir)
+                    .current_dir(&dir)
                     .run()?;
                 Command::new("git").args(["reset", "--hard"]).current_dir(&dir).run()?;
 
@@ -108,12 +111,13 @@ impl ZiskBuildToolchain {
             .with_context(|| format!("while writing configuration to {bootstrap_file:?}"))?;
 
         // Work around target sanity check added in
-        // rust-lang/rust@09c076810cb7649e5817f316215010d49e78e8d7.
-        let temp_dir = std::env::temp_dir().join("rustc-targets");
-        if !temp_dir.exists() {
-            std::fs::create_dir_all(&temp_dir)
-                .with_context(|| format!("while creating directory {temp_dir:?}"))?;
-        }
+        // rust-lang/rust@09c076810cb7649e5817f316215010d49e78e8d7. The build reads target specs
+        // from this directory, so it is private too; it lives until the build is done.
+        let targets_dir = tempfile::Builder::new()
+            .prefix("rustc-targets-")
+            .tempdir()
+            .context("while creating the target spec directory")?;
+        let temp_dir = targets_dir.path();
 
         std::fs::File::create(temp_dir.join("riscv64ima-zisk-zkvm-elf.json")).with_context(
             || format!("while creating file {temp_dir:?}/riscv64ima-zisk-zkvm-elf.json"),
