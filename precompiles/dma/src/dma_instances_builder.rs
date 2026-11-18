@@ -11,8 +11,9 @@ use crate::{
 pub struct DmaInstancesBuilder {
     pub tag: String,
     pub current_chunk: Option<ChunkId>,
-    pub max_instances: usize,
-    pub rows: usize,
+    /// Rows of each instance, in the order they are filled: an air at several heights lists its
+    /// roomiest instances first, so the tail lands in the short one.
+    pub heights: Vec<usize>,
     pub rows_available: usize,
     pub instances: Vec<DmaInstanceInfo>,
     pub count_memcpy_rows: usize,
@@ -28,11 +29,15 @@ pub struct DmaInstancesBuilder {
 
 impl DmaInstancesBuilder {
     pub fn new(tag: &str, max_instances: usize, rows: usize) -> Self {
+        Self::with_heights(tag, vec![rows; max_instances])
+    }
+
+    /// A builder whose instance `i` holds `heights[i]` rows.
+    pub fn with_heights(tag: &str, heights: Vec<usize>) -> Self {
         Self {
             tag: tag.to_string(),
             current_chunk: None,
-            max_instances,
-            rows,
+            heights,
             rows_available: 0,
             instances: Vec::new(),
             skip_memcpy_rows: 0,
@@ -74,17 +79,17 @@ impl DmaInstancesBuilder {
                 self.tag, self.rows_available
             );
         }
-        if self.instances.len() >= self.max_instances {
+        if self.instances.len() >= self.heights.len() {
             println!("{:?}", self);
             panic!(
                 "[{}] Too many instances {} max: {}, cannot create more",
                 self.tag,
                 self.instances.len(),
-                self.max_instances
+                self.heights.len()
             );
         }
+        self.rows_available = self.heights[self.instances.len()];
         self.instances.push(DmaInstanceInfo { chunks: HashMap::new(), last_chunk: None });
-        self.rows_available = self.rows;
     }
     pub fn flush_current_chunk(&mut self) {
         if let Some(chunk_id) = self.current_chunk {

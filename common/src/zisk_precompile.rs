@@ -309,6 +309,13 @@ macro_rules! zisk_precompile_explicit {
 
                     let total: u64 = count.iter().map(|c| c.inst_count).sum();
                     let granted = $crate::select_sizes(total, &ladder);
+                    ::tracing::debug!(
+                        "··· {} ladder: {} ops in {:?} (instances of each air, capacities {:?})",
+                        stringify!($name),
+                        total,
+                        granted,
+                        ladder.iter().map(|air| air.rows).collect::<::std::vec::Vec<_>>(),
+                    );
 
                     // Fill the roomiest instances first, so the tail is what lands in the small one
                     // the sizing demoted.

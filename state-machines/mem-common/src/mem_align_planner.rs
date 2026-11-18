@@ -425,8 +425,9 @@ impl<'a> MemAlignPlanner<'a> {
         }
 
         tracing::debug!(
-            "··· MemAlign instances: read_byte_large={} read_byte={} write_byte={} byte_large={} \
-             byte={} full_large={} full={}",
+            "··· MemAlign instances ({full_rows} full rows, {read_byte} read bytes, {write_byte} write \
+             bytes): read_byte_large={} read_byte={} write_byte={} byte_large={} byte={} \
+             full_large={} full={}",
             selection.instances[air::READ_BYTE_LARGE],
             selection.instances[air::READ_BYTE],
             selection.instances[air::WRITE_BYTE],

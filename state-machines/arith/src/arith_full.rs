@@ -5,7 +5,7 @@
 //! counted here: the prover derives them directly from the committed trace.
 
 use crate::ArithOperation;
-use proofman_common::{AirInstance, FromTrace, ProofmanResult};
+use proofman_common::{AirInstance, FromTrace, GenericTrace, ProofmanResult};
 use proofman_fields::PrimeField64;
 use rayon::prelude::*;
 use std::collections::VecDeque;
@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use zisk_common::{BusId, ExtOperationData, OperationBusData, OperationData};
 use zisk_core::{zisk_ops::ZiskOp, ZiskOperationType};
-use zisk_pil::{ArithAirValues, ArithTrace, ArithTraceRowOps};
+use zisk_pil::{ArithAirValues, ArithTraceRowOps, ZISK_AIRGROUP_ID};
 use zisk_sm_binary::{GT_OP, LTU_DIV_OP, LT_ABS_NP_OP, LT_ABS_PN_OP};
 
 const CHUNK_SIZE: u64 = 0x10000;
@@ -47,12 +47,15 @@ impl<F: PrimeField64> ArithFullSM<F> {
     ///
     /// # Returns
     /// An `AirInstance` containing the computed arithmetic trace.
-    pub fn compute_witness<R: ArithTraceRowOps<F>>(
+    /// The air is selected by `NUM_ROWS` / `AIR_ID`: every height of the arithmetic air (`Arith`,
+    /// `ArithSmall`) commits the same columns and air values, so one body serves them all.
+    pub fn compute_witness<R: ArithTraceRowOps<F>, const NUM_ROWS: usize, const AIR_ID: usize>(
         &self,
         inputs: &[Vec<OperationData<u64>>],
         trace_buffer: Vec<F>,
     ) -> ProofmanResult<AirInstance<F>> {
-        let mut arith_trace = ArithTrace::<R>::new_from_vec(trace_buffer)?;
+        let mut arith_trace =
+            GenericTrace::<R, NUM_ROWS, ZISK_AIRGROUP_ID, AIR_ID>::new_from_vec(trace_buffer)?;
 
         let num_rows = arith_trace.num_rows();
 

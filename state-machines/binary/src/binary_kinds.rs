@@ -11,8 +11,8 @@
 use crate::{lanes_x_row, AirSlot};
 use zisk_pil::{
     BinaryAddHiHugeTrace, BinaryAddHiLargeTrace, BinaryAddHiTrace, BinaryAddHugeTrace,
-    BinaryAddLargeTrace, BinaryAddTrace, BinaryExtensionLargeTrace, BinaryExtensionTrace,
-    BinaryHugeTrace, BinaryLargeTrace, BinaryTrace,
+    BinaryAddLargeTrace, BinaryAddTrace, BinaryExtensionLargeTrace, BinaryExtensionSmallTrace,
+    BinaryExtensionTrace, BinaryHugeTrace, BinaryLargeTrace, BinaryTrace,
 };
 
 /// Kinds of the basic/add family, in the order the distributor sees them.
@@ -40,7 +40,7 @@ pub const KIND_EXT: usize = 0;
 /// Airs of the add family, in hand-out order.
 pub const ADD_AIRS: usize = 9;
 /// Airs of the extension family, in hand-out order.
-pub const EXT_AIRS: usize = 2;
+pub const EXT_AIRS: usize = 3;
 
 /// The add-family airs, most specific and tallest first, so each takes what it can and the rest flows
 /// on. Within a specialisation the tall air goes first because filling it is what spares the family an
@@ -163,6 +163,13 @@ pub fn ext_family(instances: [u64; EXT_AIRS]) -> [AirSlot<EXT_KINDS>; EXT_AIRS] 
             BinaryExtensionTrace::<()>::NUM_ROWS,
             lanes_x_row::EXT,
             instances[1],
+        ),
+        ext(
+            BinaryExtensionSmallTrace::<()>::AIRGROUP_ID,
+            BinaryExtensionSmallTrace::<()>::AIR_ID,
+            BinaryExtensionSmallTrace::<()>::NUM_ROWS,
+            lanes_x_row::EXT,
+            instances[2],
         ),
     ]
 }

@@ -206,6 +206,79 @@ pub fn plan_ladder(
     checkpoints
 }
 
+/// [`plan_with_frops`] over a size ladder: instance `i` holds `capacities[i]` operations, so the
+/// caller lists the granted instances roomiest first and the tail lands in the last one. Returns,
+/// per instance, its index into `capacities` with its checkpoint and collect info. A chunk with
+/// frequent operations only joins the instance open at that point, as in [`plan_with_frops`], so
+/// an execution with frequent operations and nothing else still needs one capacity to land in.
+#[allow(clippy::type_complexity)]
+pub fn plan_ladder_with_frops(
+    counts: &[InstFropsCount],
+    capacities: &[u64],
+) -> Vec<(usize, CheckPoint, HashMap<ChunkId, (u64, bool, CollectSkipper)>)> {
+    if counts.is_empty() || capacities.is_empty() {
+        return vec![];
+    }
+    assert!(
+        capacities.iter().all(|&capacity| capacity > 0),
+        "plan_ladder_with_frops: an instance of zero capacity would never make progress: {capacities:?}"
+    );
+
+    let mut checkpoints = Vec::new();
+    let mut current_scope: HashMap<ChunkId, (u64, bool, CollectSkipper)> = HashMap::new();
+    let mut instance = 0usize;
+    let mut remaining_size = capacities[0];
+
+    for (current_chunk, count) in counts.iter().enumerate() {
+        let has_frops = count.frops_count > 0;
+        let mut inst_count = count.inst_count;
+        let mut cumulative_offset = 0u64;
+
+        while inst_count > 0 || has_frops {
+            // The instance is full and rows are left: close it and open the next one. Opening it
+            // only for rows keeps an exactly filled last instance from stepping past the end of
+            // `capacities`, and lets a chunk of frequent operations only (no rows) join the full
+            // instance instead of opening an empty one.
+            if remaining_size == 0 && inst_count > 0 {
+                let keys = current_scope.keys().cloned().collect::<Vec<_>>();
+                checkpoints.push((
+                    instance,
+                    CheckPoint::Multiple(keys),
+                    std::mem::take(&mut current_scope),
+                ));
+                instance += 1;
+                assert!(
+                    instance < capacities.len(),
+                    "plan_ladder_with_frops: {capacities:?} cannot hold every operation"
+                );
+                remaining_size = capacities[instance];
+            }
+
+            let checkpoint_size = remaining_size.min(inst_count);
+            inst_count -= checkpoint_size;
+            remaining_size -= checkpoint_size;
+            // A chunk with frequent operations runs to its end: they may follow its last row.
+            let force_execute_to_end = has_frops && inst_count == 0;
+            current_scope.insert(
+                ChunkId(current_chunk),
+                (checkpoint_size, force_execute_to_end, CollectSkipper::new(cumulative_offset)),
+            );
+            cumulative_offset += checkpoint_size;
+
+            if inst_count == 0 {
+                break;
+            }
+        }
+    }
+
+    if !current_scope.is_empty() {
+        let keys = current_scope.keys().cloned().collect::<Vec<_>>();
+        checkpoints.push((instance, CheckPoint::Multiple(keys), current_scope));
+    }
+
+    checkpoints
+}
+
 /// Generates a nested list of checkpoints from instruction and frops counts across multiple chunks.
 ///
 /// Each inner vector corresponds to a scope of the plan and contains tuples of:
@@ -610,5 +683,48 @@ mod tests_frops {
     #[test]
     fn test_multiple_chunks_only_last_chunk_has_frops() {
         base_test_multiple_chunks([0, 1]);
+    }
+
+    /// A ladder [10, 4]: 12 rows fill the tall instance and leave 2 for the short one, a chunk split
+    /// between them runs to its end only in the instance that takes its last rows, and a chunk of
+    /// frequent operations only joins the instance open at that point instead of opening a third.
+    #[test]
+    fn test_ladder_tail_split_and_frops_only_chunk() {
+        let counts = [
+            InstFropsCount::new(ChunkId(0), 6, 0),
+            InstFropsCount::new(ChunkId(1), 6, 3),
+            InstFropsCount::new(ChunkId(2), 0, 2),
+        ];
+        let result = plan_ladder_with_frops(&counts, &[10, 4]);
+        assert_eq!(result.len(), 2);
+
+        let (tall, _, tall_scope) = &result[0];
+        assert_eq!(*tall, 0);
+        assert_eq!(tall_scope[&ChunkId(0)].0, 6);
+        assert_eq!(tall_scope[&ChunkId(1)].0, 4);
+        assert!(!tall_scope[&ChunkId(1)].1, "the chunk's last rows are in the next instance");
+
+        let (short, _, short_scope) = &result[1];
+        assert_eq!(*short, 1);
+        assert_eq!(short_scope[&ChunkId(1)].0, 2);
+        assert_eq!(short_scope[&ChunkId(1)].2.skip, 4);
+        assert!(short_scope[&ChunkId(1)].1);
+        assert_eq!(short_scope[&ChunkId(2)].0, 0);
+        assert!(short_scope[&ChunkId(2)].1);
+    }
+
+    /// Frequent operations and no rows still need one instance, and an exactly filled ladder never
+    /// asks for one past its end.
+    #[test]
+    fn test_ladder_frops_only_and_exact_fill() {
+        let frops_only = [InstFropsCount::new(ChunkId(0), 0, 5)];
+        let result = plan_ladder_with_frops(&frops_only, &[4]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].2[&ChunkId(0)], (0, true, CollectSkipper::new(0)));
+
+        let exact = [InstFropsCount::new(ChunkId(0), 10, 0), InstFropsCount::new(ChunkId(1), 0, 1)];
+        let result = plan_ladder_with_frops(&exact, &[10]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].2[&ChunkId(1)].0, 0);
     }
 }

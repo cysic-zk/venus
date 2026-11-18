@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use proofman_fields::PrimeField64;
 
-use proofman_common::{AirInstance, FromTrace, ProofmanResult};
+use proofman_common::{AirInstance, FromTrace, GenericTrace, ProofmanResult};
 use proofman_util::{timer_start_trace, timer_stop_and_log_trace};
 use rayon::{
     iter::{IndexedParallelIterator, ParallelIterator},
@@ -10,15 +10,27 @@ use rayon::{
 };
 use zisk_core::zisk_ops::ZiskOp;
 use zisk_pil::{
-    DmaPrePostTrace, DmaPrePostTraceRow, DmaPrePostTraceRowOps, DmaPrePostTraceRowPacked,
+    DmaPrePostSmallTrace, DmaPrePostTrace, DmaPrePostTraceRow, DmaPrePostTraceRowOps,
+    DmaPrePostTraceRowPacked, ZISK_AIRGROUP_ID,
 };
+
+const ROWS: usize = DmaPrePostTrace::<()>::NUM_ROWS;
+const AIR_ID: usize = DmaPrePostTrace::<()>::AIR_ID;
+const SMALL_ROWS: usize = DmaPrePostSmallTrace::<()>::NUM_ROWS;
+const SMALL_AIR_ID: usize = DmaPrePostSmallTrace::<()>::AIR_ID;
 
 use crate::{dma_trace, DmaPrePostInput, DmaPrePostModule};
 use zisk_precomp_helpers::DmaInfo;
 
 /// The `DmaPrePostSM` struct encapsulates the logic of the DmaPrePost State Machine.
+///
+/// One instance of it serves one air: `air_id` says which of the two heights (`DmaPrePost`,
+/// `DmaPrePostSmall`) this one builds. The heights commit the same columns.
 pub struct DmaPrePostSM<F: PrimeField64> {
     _phantom: std::marker::PhantomData<F>,
+
+    /// The air this state machine builds traces for: [`AIR_ID`] or [`SMALL_AIR_ID`].
+    air_id: usize,
 }
 
 impl<F: PrimeField64> DmaPrePostSM<F> {
@@ -26,8 +38,12 @@ impl<F: PrimeField64> DmaPrePostSM<F> {
     ///
     /// # Returns
     /// A new `DmaPrePostSM` instance.
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self { _phantom: std::marker::PhantomData })
+    pub fn new(air_id: usize) -> Arc<Self> {
+        assert!(
+            air_id == AIR_ID || air_id == SMALL_AIR_ID,
+            "DmaPrePostSM: unsupported air_id {air_id}"
+        );
+        Arc::new(Self { _phantom: std::marker::PhantomData, air_id })
     }
 
     /// Processes a slice of operation data, updating the trace.
@@ -226,12 +242,19 @@ impl<F: PrimeField64> DmaPrePostSM<F> {
             }
         }
     }
-    fn compute_witness_inner<R: DmaPrePostTraceRowOps<F> + Copy + Send>(
+    fn compute_witness_inner<
+        R: DmaPrePostTraceRowOps<F> + Copy + Send,
+        const NUM_ROWS: usize,
+        const TRACE_AIR_ID: usize,
+    >(
         &self,
         inputs: &[Vec<DmaPrePostInput>],
         trace_buffer: Vec<F>,
     ) -> ProofmanResult<AirInstance<F>> {
-        let mut trace = DmaPrePostTrace::<R>::new_from_vec_zeroes(trace_buffer)?;
+        let mut trace =
+            GenericTrace::<R, NUM_ROWS, ZISK_AIRGROUP_ID, TRACE_AIR_ID>::new_from_vec_zeroes(
+                trace_buffer,
+            )?;
         let num_rows = trace.num_rows();
 
         let total_inputs: usize = inputs.iter().map(|inputs| inputs.len()).sum();
@@ -352,10 +375,24 @@ impl<F: PrimeField64> DmaPrePostModule<F> for DmaPrePostSM<F> {
         trace_buffer: Vec<F>,
         packed: bool,
     ) -> ProofmanResult<AirInstance<F>> {
-        if packed {
-            self.compute_witness_inner::<DmaPrePostTraceRowPacked<F>>(inputs, trace_buffer)
-        } else {
-            self.compute_witness_inner::<DmaPrePostTraceRow<F>>(inputs, trace_buffer)
+        match (self.air_id == SMALL_AIR_ID, packed) {
+            (false, true) => self
+                .compute_witness_inner::<DmaPrePostTraceRowPacked<F>, ROWS, AIR_ID>(
+                    inputs,
+                    trace_buffer,
+                ),
+            (false, false) => self
+                .compute_witness_inner::<DmaPrePostTraceRow<F>, ROWS, AIR_ID>(inputs, trace_buffer),
+            (true, true) => self
+                .compute_witness_inner::<DmaPrePostTraceRowPacked<F>, SMALL_ROWS, SMALL_AIR_ID>(
+                    inputs,
+                    trace_buffer,
+                ),
+            (true, false) => self
+                .compute_witness_inner::<DmaPrePostTraceRow<F>, SMALL_ROWS, SMALL_AIR_ID>(
+                    inputs,
+                    trace_buffer,
+                ),
         }
     }
 }

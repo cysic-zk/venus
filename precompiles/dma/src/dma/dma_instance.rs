@@ -16,7 +16,7 @@ use std::sync::Arc;
 use zisk_common::{
     BusDevice, CheckPoint, ChunkId, Instance, InstanceCtx, InstanceType, PayloadType, StatsType,
 };
-use zisk_pil::DmaTrace;
+use zisk_pil::{DmaSmallTrace, DmaTrace};
 
 /// The `DmaInstance` struct represents an instance for the Dma State Machine.
 ///
@@ -46,9 +46,9 @@ impl<F: PrimeField64> DmaInstance<F> {
     }
 
     pub fn build_dma_collector(&self, chunk_id: ChunkId) -> DmaCollector {
-        debug_assert_eq!(
-            self.ictx.plan.air_id,
-            DmaTrace::<()>::AIR_ID,
+        debug_assert!(
+            self.ictx.plan.air_id == DmaTrace::<()>::AIR_ID
+                || self.ictx.plan.air_id == DmaSmallTrace::<()>::AIR_ID,
             "DmaInstance: Unsupported air_id: {:?}",
             self.ictx.plan.air_id
         );
@@ -133,9 +133,9 @@ impl<F: PrimeField64> Instance<F> for DmaInstance<F> {
     }
 
     fn build_inputs_collector(&self, chunk_id: ChunkId) -> Option<Box<dyn BusDevice<PayloadType>>> {
-        assert_eq!(
-            self.ictx.plan.air_id,
-            DmaTrace::<()>::AIR_ID,
+        assert!(
+            self.ictx.plan.air_id == DmaTrace::<()>::AIR_ID
+                || self.ictx.plan.air_id == DmaSmallTrace::<()>::AIR_ID,
             "DmaInstance: Unsupported air_id: {:?}",
             self.ictx.plan.air_id
         );

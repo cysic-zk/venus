@@ -41,12 +41,16 @@ use crate::{
 use crate::get_dma_air_name;
 
 use proofman_fields::PrimeField64;
-use zisk_common::{select_airs, AirChoice, BusDeviceMetrics, BusDeviceMode, CheckPoint, ChunkId};
+use zisk_common::{
+    select_airs, select_sizes, AirChoice, BusDeviceMetrics, BusDeviceMode, CheckPoint, ChunkId,
+};
 
 use zisk_pil::{
     Dma64AlignedLargeTrace, Dma64AlignedMemCpyTrace, Dma64AlignedMemLargeTrace,
-    Dma64AlignedMemSetTrace, Dma64AlignedMemTrace, Dma64AlignedTrace, DmaPrePostTrace, DmaTrace,
-    DmaUnalignedTrace, DMA_64_ALIGNED_INSTANCE_COST, DMA_64_ALIGNED_LARGE_INSTANCE_COST,
+    Dma64AlignedMemSetTrace, Dma64AlignedMemTrace, Dma64AlignedTrace, DmaPrePostSmallTrace,
+    DmaPrePostTrace, DmaSmallTrace, DmaTrace, DmaUnalignedTrace, DMA_64_ALIGNED_INSTANCE_COST,
+    DMA_64_ALIGNED_LARGE_INSTANCE_COST, DMA_INSTANCE_COST, DMA_PRE_POST_INSTANCE_COST,
+    DMA_PRE_POST_SMALL_INSTANCE_COST, DMA_SMALL_INSTANCE_COST,
     DMA_64_ALIGNED_MEM_CPY_INSTANCE_COST, DMA_64_ALIGNED_MEM_INSTANCE_COST,
     DMA_64_ALIGNED_MEM_LARGE_INSTANCE_COST, DMA_64_ALIGNED_MEM_SET_INSTANCE_COST,
 };
@@ -119,10 +123,10 @@ impl fmt::Display for Dma64AlignedInstances {
 /// execution plans for each instance.
 #[derive(Default)]
 pub struct DmaStrategy<F> {
-    /// Instances of the single-air `Dma` group.
-    pub dma: usize,
-    /// Instances of the single-air `DmaPrePost` group.
-    pub dma_pre_post: usize,
+    /// Instances of the `Dma` group, of each height: `[Dma, DmaSmall]`.
+    pub dma: [usize; 2],
+    /// Instances of the `DmaPrePost` group, of each height: `[DmaPrePost, DmaPrePostSmall]`.
+    pub dma_pre_post: [usize; 2],
     /// The 64-bit-aligned group's assignment.
     pub dma_64_aligned: Dma64AlignedInstances,
     /// Instances of the single-air `DmaUnaligned` group.
@@ -135,14 +139,19 @@ impl<F> fmt::Display for DmaStrategy<F> {
         write!(
             f,
             "────────────────────────────────────────── DMA\n  \
-             full      {:>3}\n\
+             full      {:>3} small {:>3}\n\
              ───────────────────────────────── DMA_PRE_POST\n  \
-             full      {:>3}\n\
+             full      {:>3} small {:>3}\n\
              ─────────────────────────────── DMA_64_ALIGNED\n\
              {}\
              ──────────────────────────────── DMA_UNALIGNED\n  \
              full      {:>3}\n\n",
-            self.dma, self.dma_pre_post, self.dma_64_aligned, self.dma_unaligned,
+            self.dma[0],
+            self.dma[1],
+            self.dma_pre_post[0],
+            self.dma_pre_post[1],
+            self.dma_64_aligned,
+            self.dma_unaligned,
         )
     }
 }
@@ -168,7 +177,9 @@ impl<F: PrimeField64> DmaStrategy<F> {
     }
 
     const DMA_ROWS: usize = DmaTrace::<()>::NUM_ROWS;
+    const DMA_SMALL_ROWS: usize = DmaSmallTrace::<()>::NUM_ROWS;
     const DMA_PRE_POST_ROWS: usize = DmaPrePostTrace::<()>::NUM_ROWS;
+    const DMA_PRE_POST_SMALL_ROWS: usize = DmaPrePostSmallTrace::<()>::NUM_ROWS;
     const DMA_UNALIGNED_ROWS: usize = DmaUnalignedTrace::<()>::NUM_ROWS;
     const DMA_64_ALIGNED_ROWS: usize = Dma64AlignedTrace::<()>::NUM_ROWS;
     const DMA_64_ALIGNED_LARGE_ROWS: usize = Dma64AlignedLargeTrace::<()>::NUM_ROWS;
@@ -292,14 +303,68 @@ impl<F: PrimeField64> DmaStrategy<F> {
             + rows[DMA_COUNTER_MEMCMP]
     }
 
+    /// The two heights of the `Dma` air, tall first.
+    fn dma_airs() -> [AirChoice; 2] {
+        [
+            AirChoice::new(
+                DmaTrace::<()>::AIRGROUP_ID,
+                DmaTrace::<()>::AIR_ID,
+                Self::DMA_ROWS,
+                DMA_INSTANCE_COST,
+            ),
+            AirChoice::new(
+                DmaSmallTrace::<()>::AIRGROUP_ID,
+                DmaSmallTrace::<()>::AIR_ID,
+                Self::DMA_SMALL_ROWS,
+                DMA_SMALL_INSTANCE_COST,
+            ),
+        ]
+    }
+
+    /// The two heights of the `DmaPrePost` air, tall first.
+    fn dma_pre_post_airs() -> [AirChoice; 2] {
+        [
+            AirChoice::new(
+                DmaPrePostTrace::<()>::AIRGROUP_ID,
+                DmaPrePostTrace::<()>::AIR_ID,
+                Self::DMA_PRE_POST_ROWS,
+                DMA_PRE_POST_INSTANCE_COST,
+            ),
+            AirChoice::new(
+                DmaPrePostSmallTrace::<()>::AIRGROUP_ID,
+                DmaPrePostSmallTrace::<()>::AIR_ID,
+                Self::DMA_PRE_POST_SMALL_ROWS,
+                DMA_PRE_POST_SMALL_INSTANCE_COST,
+            ),
+        ]
+    }
+
+    /// Instances of each height of a two-height group holding `rows` rows. Neither group chains
+    /// its instances (no continuation bus), so a tail may go to the short air.
+    fn ladder_instances(rows: usize, airs: &[AirChoice; 2]) -> [usize; 2] {
+        let granted = select_sizes(rows as u64, airs);
+        [granted[0] as usize, granted[1] as usize]
+    }
+
+    /// The heights of a two-height group's instances, in fill order: roomiest first, so the tail
+    /// lands in the short air.
+    fn ladder_heights(instances: [usize; 2], rows: [usize; 2]) -> Vec<usize> {
+        let mut heights = vec![rows[0]; instances[0]];
+        heights.extend(std::iter::repeat_n(rows[1], instances[1]));
+        heights
+    }
+
     fn calculate_strategy(&mut self, totals: &DmaCounterInputGen) {
-        self.dma =
-            Self::single_air_rows(&totals.counters[DMA_OFFSET..DMA_OFFSET + DMA_COUNTER_OPS])
-                .div_ceil(Self::DMA_ROWS);
-        self.dma_pre_post = Self::single_air_rows(
-            &totals.counters[DMA_PRE_POST_OFFSET..DMA_PRE_POST_OFFSET + DMA_COUNTER_OPS],
-        )
-        .div_ceil(Self::DMA_PRE_POST_ROWS);
+        self.dma = Self::ladder_instances(
+            Self::single_air_rows(&totals.counters[DMA_OFFSET..DMA_OFFSET + DMA_COUNTER_OPS]),
+            &Self::dma_airs(),
+        );
+        self.dma_pre_post = Self::ladder_instances(
+            Self::single_air_rows(
+                &totals.counters[DMA_PRE_POST_OFFSET..DMA_PRE_POST_OFFSET + DMA_COUNTER_OPS],
+            ),
+            &Self::dma_pre_post_airs(),
+        );
         Self::calculate_dma_64_alignment_strategy(
             &totals.counters[DMA_64_ALIGNED_OFFSET..DMA_64_ALIGNED_OFFSET + DMA_COUNTER_OPS_EXT],
             &mut self.dma_64_aligned,
@@ -320,11 +385,16 @@ impl<F: PrimeField64> DmaStrategy<F> {
 
         self.calculate_strategy(&totals);
 
-        let mut dma_full = DmaInstancesBuilder::new("dma_full", self.dma, Self::DMA_ROWS);
-        let mut dma_pre_post_full = DmaInstancesBuilder::new(
+        let mut dma_full = DmaInstancesBuilder::with_heights(
+            "dma_full",
+            Self::ladder_heights(self.dma, [Self::DMA_ROWS, Self::DMA_SMALL_ROWS]),
+        );
+        let mut dma_pre_post_full = DmaInstancesBuilder::with_heights(
             "dma_pre_post_full",
-            self.dma_pre_post,
-            Self::DMA_PRE_POST_ROWS,
+            Self::ladder_heights(
+                self.dma_pre_post,
+                [Self::DMA_PRE_POST_ROWS, Self::DMA_PRE_POST_SMALL_ROWS],
+            ),
         );
         let mut dma_unaligned =
             DmaInstancesBuilder::new("dma_unaligned", self.dma_unaligned, Self::DMA_UNALIGNED_ROWS);
@@ -420,9 +490,17 @@ impl<F: PrimeField64> DmaStrategy<F> {
             Dma64AlignedMemCpyTrace::<F>::AIR_ID,
             Dma64AlignedMemSetTrace::<F>::AIR_ID,
         ];
+        // A two-height group's plan lists its tall instances first: split it between the airs.
+        let mut dma_plan = dma_full.get_plan();
+        let dma_small_plan = dma_plan.split_off(self.dma[0].min(dma_plan.len()));
+        let mut dma_pre_post_plan = dma_pre_post_full.get_plan();
+        let dma_pre_post_small_plan =
+            dma_pre_post_plan.split_off(self.dma_pre_post[0].min(dma_pre_post_plan.len()));
         let mut plans = vec![
-            (DmaTrace::<F>::AIR_ID, dma_full.get_plan()),
-            (DmaPrePostTrace::<F>::AIR_ID, dma_pre_post_full.get_plan()),
+            (DmaTrace::<F>::AIR_ID, dma_plan),
+            (DmaSmallTrace::<F>::AIR_ID, dma_small_plan),
+            (DmaPrePostTrace::<F>::AIR_ID, dma_pre_post_plan),
+            (DmaPrePostSmallTrace::<F>::AIR_ID, dma_pre_post_small_plan),
             (DmaUnalignedTrace::<F>::AIR_ID, dma_unaligned.get_plan()),
         ];
         plans.extend(

@@ -7,8 +7,8 @@ use zisk_common::{
 };
 use zisk_pil::{
     Dma64AlignedLargeTrace, Dma64AlignedMemCpyTrace, Dma64AlignedMemLargeTrace,
-    Dma64AlignedMemSetTrace, Dma64AlignedMemTrace, Dma64AlignedTrace, DmaPrePostTrace, DmaTrace,
-    DmaUnalignedTrace, ZiskProofValues,
+    Dma64AlignedMemSetTrace, Dma64AlignedMemTrace, Dma64AlignedTrace, DmaPrePostSmallTrace,
+    DmaPrePostTrace, DmaSmallTrace, DmaTrace, DmaUnalignedTrace, ZiskProofValues,
 };
 
 use crate::{
@@ -23,7 +23,9 @@ use crate::{
 pub struct DmaManager<F: PrimeField64> {
     /// Dma state machine
     dma_sm: Arc<DmaSM<F>>,
+    dma_small_sm: Arc<DmaSM<F>>,
     dma_pre_post_sm: Arc<DmaPrePostSM<F>>,
+    dma_pre_post_small_sm: Arc<DmaPrePostSM<F>>,
     /// One state machine per height of the `Dma64Aligned` air.
     dma_64_aligned_sm: Arc<Dma64AlignedSM<F>>,
     dma_64_aligned_large_sm: Arc<Dma64AlignedSM<F>>,
@@ -41,8 +43,10 @@ impl<F: PrimeField64> DmaManager<F> {
     /// # Returns
     /// An `Arc`-wrapped instance of `DmaManager`.
     pub fn new() -> Arc<Self> {
-        let dma_sm = DmaSM::new();
-        let dma_pre_post_sm = DmaPrePostSM::new();
+        let dma_sm = DmaSM::new(DmaTrace::<()>::AIR_ID);
+        let dma_small_sm = DmaSM::new(DmaSmallTrace::<()>::AIR_ID);
+        let dma_pre_post_sm = DmaPrePostSM::new(DmaPrePostTrace::<()>::AIR_ID);
+        let dma_pre_post_small_sm = DmaPrePostSM::new(DmaPrePostSmallTrace::<()>::AIR_ID);
         let dma_64_aligned_sm = Dma64AlignedSM::new(Dma64AlignedTrace::<()>::AIR_ID);
         let dma_64_aligned_large_sm = Dma64AlignedSM::new(Dma64AlignedLargeTrace::<()>::AIR_ID);
         let dma_64_aligned_mem_sm = Dma64AlignedMemSM::new(Dma64AlignedMemTrace::<()>::AIR_ID);
@@ -54,7 +58,9 @@ impl<F: PrimeField64> DmaManager<F> {
 
         Arc::new(Self {
             dma_sm,
+            dma_small_sm,
             dma_pre_post_sm,
+            dma_pre_post_small_sm,
             dma_64_aligned_sm,
             dma_64_aligned_large_sm,
             dma_64_aligned_mem_sm,
@@ -95,9 +101,15 @@ impl<F: PrimeField64> ComponentBuilder<F> for DmaManager<F> {
         match ictx.plan.air_id {
             // DMA controller instances
             DmaTrace::<()>::AIR_ID => Box::new(DmaInstance::new(self.dma_sm.clone(), ictx)),
+            DmaSmallTrace::<()>::AIR_ID => {
+                Box::new(DmaInstance::new(self.dma_small_sm.clone(), ictx))
+            }
             // DMA pre post instances
             DmaPrePostTrace::<()>::AIR_ID => {
                 Box::new(DmaPrePostInstance::new(self.dma_pre_post_sm.clone(), ictx))
+            }
+            DmaPrePostSmallTrace::<()>::AIR_ID => {
+                Box::new(DmaPrePostInstance::new(self.dma_pre_post_small_sm.clone(), ictx))
             }
             // DMA 64 aligned instances
             Dma64AlignedTrace::<()>::AIR_ID => {

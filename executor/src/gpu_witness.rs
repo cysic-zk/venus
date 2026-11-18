@@ -5,5 +5,5 @@ use proofman_common::GpuWitnessAir;
 
 /// Every air this build can produce on the device.
 pub fn gpu_witness_airs() -> Vec<GpuWitnessAir> {
-    [zisk_precomp_keccakf::gpu_witness_air()].into_iter().flatten().collect()
+    zisk_precomp_keccakf::gpu_witness_airs()
 }

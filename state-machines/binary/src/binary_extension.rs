@@ -17,7 +17,8 @@ use proofman_fields::PrimeField64;
 use zisk_core::zisk_ops::ZiskOp;
 use zisk_pil::{
     BinaryExtensionAirValues, BinaryExtensionLargeAirValues, BinaryExtensionLargeTrace,
-    BinaryExtensionLargeTraceRowOps, BinaryExtensionTrace, BinaryExtensionTraceRowOps,
+    BinaryExtensionLargeTraceRowOps, BinaryExtensionSmallAirValues, BinaryExtensionSmallTrace,
+    BinaryExtensionTrace, BinaryExtensionTraceRowOps,
 };
 
 use crate::BinaryLanes;
@@ -170,6 +171,14 @@ impl_binary_extension_row!(
     BinaryExtensionLargeTrace,
     BinaryExtensionLargeAirValues,
     crate::lanes_x_row::EXT_LARGE
+);
+// The short `BinaryExtension`: one lane per row like the tall one, so the same rows fill it and only
+// the trace (height, air id) and its air values differ.
+impl_binary_extension_row!(
+    BinaryExtensionTraceRowOps,
+    BinaryExtensionSmallTrace,
+    BinaryExtensionSmallAirValues,
+    crate::lanes_x_row::EXT
 );
 
 /// The `BinaryExtensionSM` struct defines the Binary Extension State Machine.

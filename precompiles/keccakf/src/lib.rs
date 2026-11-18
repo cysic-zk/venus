@@ -17,24 +17,33 @@ pub const MAX_OPS_PER_INSTANCE: usize = keccakf_constants::OPS_PER_SLOT
 ///
 /// The `cfg(gpu)` gate lives here, in the crate that owns the kernel, so callers
 /// collecting declarations never need a CUDA-aware build of their own.
-pub fn gpu_witness_air() -> Option<::proofman_common::GpuWitnessAir> {
+pub fn gpu_witness_airs() -> Vec<::proofman_common::GpuWitnessAir> {
     #[cfg(gpu)]
     {
         use ::proofman_common::{GpuWitnessAir, TraceLayout};
         use keccakf_gpu::KeccakfKernel;
-        Some(GpuWitnessAir::new(
-            ::zisk_pil::KeccakfTrace::<()>::AIRGROUP_ID,
-            ::zisk_pil::KeccakfTrace::<()>::AIR_ID,
-            // Worst case for one instance, which is what the staging is sized against.
-            MAX_OPS_PER_INSTANCE as u64 * KeccakfKernel::BYTES_PER_OP,
-            KeccakfKernel::BYTES_PER_OP,
-            TraceLayout::PackedCm1,
-            KeccakfKernel::FILL,
-        ))
+        // Both heights of the air share the kernel: it sizes the fill by the instance's rows.
+        [
+            (::zisk_pil::KeccakfTrace::<()>::AIRGROUP_ID, ::zisk_pil::KeccakfTrace::<()>::AIR_ID),
+            (::zisk_pil::KeccakfHalfTrace::<()>::AIRGROUP_ID, ::zisk_pil::KeccakfHalfTrace::<()>::AIR_ID),
+        ]
+        .into_iter()
+        .map(|(airgroup_id, air_id)| {
+            GpuWitnessAir::new(
+                airgroup_id,
+                air_id,
+                // Worst case for one instance, which is what the staging is sized against.
+                MAX_OPS_PER_INSTANCE as u64 * KeccakfKernel::BYTES_PER_OP,
+                KeccakfKernel::BYTES_PER_OP,
+                TraceLayout::PackedCm1,
+                KeccakfKernel::FILL,
+            )
+        })
+        .collect()
     }
     #[cfg(not(gpu))]
     {
-        None
+        Vec::new()
     }
 }
 
@@ -45,11 +54,21 @@ pub use keccakf_xor5_table::*;
 zisk_common::zisk_precompile! {
     name = Keccakf,
     op_type = Keccak,
-    trace = KeccakfTrace,
-    num_available = {
-        OPS_PER_SLOT * (::zisk_pil::KeccakfTrace::<()>::NUM_ROWS / CLOCKS)
-    },
-    cost = ::zisk_pil::KECCAKF_INSTANCE_COST,
+    row = KeccakfTrace,
+    // The same air at two heights: the half one takes a block's last, partly filled instance when
+    // what is left fits in it.
+    traces = [
+        (
+            KeccakfTrace,
+            OPS_PER_SLOT * (::zisk_pil::KeccakfTrace::<()>::NUM_ROWS / CLOCKS),
+            ::zisk_pil::KECCAKF_INSTANCE_COST
+        ),
+        (
+            KeccakfHalfTrace,
+            OPS_PER_SLOT * (::zisk_pil::KeccakfHalfTrace::<()>::NUM_ROWS / CLOCKS),
+            ::zisk_pil::KECCAKF_HALF_INSTANCE_COST
+        ),
+    ],
     ops = [
         (OperationKeccakData, KeccakfInput),
     ],

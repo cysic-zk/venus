@@ -18,7 +18,7 @@ use zisk_core::frops::frops_multiplicity_from_asm;
 #[cfg(feature = "debug_frops")]
 use zisk_core::frops::{frops_check_claim_row, frops_check_enabled, FROPS_ARITH_BASE};
 use zisk_core::ZiskOperationType;
-use zisk_pil::{ArithTrace, ArithTraceRow, ArithTraceRowPacked};
+use zisk_pil::{ArithSmallTrace, ArithTrace, ArithTraceRow, ArithTraceRowPacked};
 
 /// The `ArithFullInstance` struct represents an instance for arithmetic-related witness
 /// computations.
@@ -53,9 +53,9 @@ impl<F: PrimeField64> ArithFullInstance<F> {
         mut ictx: InstanceCtx,
         std: Arc<Std<F>>,
     ) -> Self {
-        assert_eq!(
-            ictx.plan.air_id,
-            ArithTrace::<()>::AIR_ID,
+        assert!(
+            ictx.plan.air_id == ArithTrace::<()>::AIR_ID
+                || ictx.plan.air_id == ArithSmallTrace::<()>::AIR_ID,
             "ArithFullInstance: Unsupported air_id: {:?}",
             ictx.plan.air_id
         );
@@ -109,14 +109,30 @@ impl<F: PrimeField64> Instance<F> for ArithFullInstance<F> {
                 _collector.inputs
             })
             .collect();
-        if packed {
-            Ok(Some(
-                self.arith_full_sm
-                    .compute_witness::<ArithTraceRowPacked<F>>(&inputs, trace_buffer)?,
-            ))
-        } else {
-            Ok(Some(self.arith_full_sm.compute_witness::<ArithTraceRow<F>>(&inputs, trace_buffer)?))
+        // The heights share the row layout; the trace's rows and air id select the air.
+        macro_rules! witness {
+            ($trace:ident) => {
+                if packed {
+                    self.arith_full_sm.compute_witness::<
+                        ArithTraceRowPacked<F>,
+                        { $trace::<()>::NUM_ROWS },
+                        { $trace::<()>::AIR_ID },
+                    >(&inputs, trace_buffer)?
+                } else {
+                    self.arith_full_sm.compute_witness::<
+                        ArithTraceRow<F>,
+                        { $trace::<()>::NUM_ROWS },
+                        { $trace::<()>::AIR_ID },
+                    >(&inputs, trace_buffer)?
+                }
+            };
         }
+        let air_instance = if self.ictx.plan.air_id == ArithSmallTrace::<()>::AIR_ID {
+            witness!(ArithSmallTrace)
+        } else {
+            witness!(ArithTrace)
+        };
+        Ok(Some(air_instance))
     }
 
     /// Retrieves the checkpoint associated with this instance.

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use zisk_common::{
     BusDevice, CheckPoint, ChunkId, Instance, InstanceCtx, InstanceType, PayloadType, StatsType,
 };
-use zisk_pil::DmaPrePostTrace;
+use zisk_pil::{DmaPrePostSmallTrace, DmaPrePostTrace};
 
 /// The `DmaPrePostInstance` struct represents an instance for the DmaPrePost State Machine.
 ///
@@ -44,9 +44,9 @@ impl<F: PrimeField64> DmaPrePostInstance<F> {
     }
 
     pub fn build_dma_collector(&self, chunk_id: ChunkId) -> DmaPrePostCollector {
-        debug_assert_eq!(
-            self.ictx.plan.air_id,
-            DmaPrePostTrace::<()>::AIR_ID,
+        debug_assert!(
+            self.ictx.plan.air_id == DmaPrePostTrace::<()>::AIR_ID
+                || self.ictx.plan.air_id == DmaPrePostSmallTrace::<()>::AIR_ID,
             "DmaPrePostInstance: Unsupported air_id: {:?}",
             self.ictx.plan.air_id
         );
@@ -133,9 +133,9 @@ impl<F: PrimeField64> Instance<F> for DmaPrePostInstance<F> {
     }
 
     fn build_inputs_collector(&self, chunk_id: ChunkId) -> Option<Box<dyn BusDevice<PayloadType>>> {
-        assert_eq!(
-            self.ictx.plan.air_id,
-            DmaPrePostTrace::<()>::AIR_ID,
+        assert!(
+            self.ictx.plan.air_id == DmaPrePostTrace::<()>::AIR_ID
+                || self.ictx.plan.air_id == DmaPrePostSmallTrace::<()>::AIR_ID,
             "DmaPrePostInstance: Unsupported air_id: {:?}",
             self.ictx.plan.air_id
         );

@@ -18,8 +18,8 @@ use proofman_fields::PrimeField64;
 use zisk_common::{ComponentBuilder, ComponentPlanBuilder, Instance, InstanceCtx, Planner};
 use zisk_pil::{
     BinaryAddHiHugeTrace, BinaryAddHiLargeTrace, BinaryAddHiTrace, BinaryAddHugeTrace,
-    BinaryAddLargeTrace, BinaryAddTrace, BinaryExtensionLargeTrace, BinaryExtensionTrace,
-    BinaryHugeTrace, BinaryLargeTrace, BinaryTrace,
+    BinaryAddLargeTrace, BinaryAddTrace, BinaryExtensionLargeTrace, BinaryExtensionSmallTrace,
+    BinaryExtensionTrace, BinaryHugeTrace, BinaryLargeTrace, BinaryTrace,
 };
 
 /// The `BinarySM` struct represents the Binary State Machine,
@@ -100,7 +100,9 @@ impl<F: PrimeField64> ComponentBuilder<F> for BinarySM<F> {
                 ictx,
                 self.std.clone(),
             )),
-            BinaryExtensionTrace::<()>::AIR_ID | BinaryExtensionLargeTrace::<()>::AIR_ID => {
+            BinaryExtensionTrace::<()>::AIR_ID
+            | BinaryExtensionLargeTrace::<()>::AIR_ID
+            | BinaryExtensionSmallTrace::<()>::AIR_ID => {
                 Box::new(BinaryExtensionInstance::new(
                     self.binary_extension_sm.clone(),
                     ictx,

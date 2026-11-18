@@ -15,7 +15,7 @@ use zisk_common::{
     Planner,
 };
 use zisk_core::ZiskOperationType;
-use zisk_pil::ArithTrace;
+use zisk_pil::{ArithSmallTrace, ArithTrace, ARITH_INSTANCE_COST, ARITH_SMALL_INSTANCE_COST};
 
 use crate::{ArithCounterInputGen, ArithFullInstance, ArithFullSM, ArithPlanner};
 
@@ -49,12 +49,27 @@ impl<F: PrimeField64> ComponentPlanBuilder<F> for ArithSM<F> {
     }
 
     fn planner(_is_asm_emulator: bool) -> Box<dyn Planner> {
-        Box::new(ArithPlanner::new().add_instance(InstanceInfo::new(
-            ArithTrace::<()>::AIRGROUP_ID,
-            ArithTrace::<()>::AIR_ID,
-            ArithTrace::<()>::NUM_ROWS,
-            ZiskOperationType::Arith,
-        )))
+        Box::new(
+            ArithPlanner::new()
+                .add_air(
+                    InstanceInfo::new(
+                        ArithTrace::<()>::AIRGROUP_ID,
+                        ArithTrace::<()>::AIR_ID,
+                        ArithTrace::<()>::NUM_ROWS,
+                        ZiskOperationType::Arith,
+                    ),
+                    ARITH_INSTANCE_COST,
+                )
+                .add_air(
+                    InstanceInfo::new(
+                        ArithSmallTrace::<()>::AIRGROUP_ID,
+                        ArithSmallTrace::<()>::AIR_ID,
+                        ArithSmallTrace::<()>::NUM_ROWS,
+                        ZiskOperationType::Arith,
+                    ),
+                    ARITH_SMALL_INSTANCE_COST,
+                ),
+        )
     }
 }
 
@@ -68,7 +83,7 @@ impl<F: PrimeField64> ComponentBuilder<F> for ArithSM<F> {
     /// A boxed implementation of `StdInstance`.
     fn build_instance(&self, ictx: InstanceCtx) -> Box<dyn Instance<F>> {
         match ictx.plan.air_id {
-            ArithTrace::<()>::AIR_ID => {
+            ArithTrace::<()>::AIR_ID | ArithSmallTrace::<()>::AIR_ID => {
                 Box::new(ArithFullInstance::new(self.arith_full_sm.clone(), ictx, self.std.clone()))
             }
             _ => panic!("BinarySM::get_instance() Unsupported air_id: {:?}", ictx.plan.air_id),

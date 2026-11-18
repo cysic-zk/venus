@@ -19,8 +19,8 @@ use zisk_core::{
     POSEIDON_OP_TYPE_ID, SHA256_OP_TYPE_ID, TWISTED_EDWARDS_OP_TYPE_ID,
 };
 use zisk_pil::{
-    ADD_256_AIR_IDS, ARITH_EQ_384_AIR_IDS, ARITH_EQ_384_LARGE_AIR_IDS, BLAKE_2_BR_AIR_IDS,
-    BLAKE_2_S_AIR_IDS, BLAKE_3_F_AIR_IDS, KECCAKF_AIR_IDS, POSEIDON_2_KOALA_BEAR_AIR_IDS,
+    ADD_256_AIR_IDS, ADD_256_SMALL_AIR_IDS, ARITH_EQ_384_AIR_IDS, ARITH_EQ_384_LARGE_AIR_IDS, BLAKE_2_BR_AIR_IDS,
+    BLAKE_2_S_AIR_IDS, BLAKE_3_F_AIR_IDS, KECCAKF_AIR_IDS, KECCAKF_HALF_AIR_IDS, POSEIDON_2_KOALA_BEAR_AIR_IDS,
     POSEIDON_AIR_IDS, SHA_256_F_AIR_IDS, TWISTED_EDWARDS_AIR_IDS,
 };
 
@@ -29,6 +29,8 @@ use zisk_pil::{
 /// build its instances, and the executor fails with `StateMachineNotFound` on the air id.
 const ARITH_EQ_384_CONFIG_AIR_IDS: &[usize] =
     &[ARITH_EQ_384_AIR_IDS[0], ARITH_EQ_384_LARGE_AIR_IDS[0]];
+const KECCAKF_LADDER_AIR_IDS: &[usize] = &[KECCAKF_AIR_IDS[0], KECCAKF_HALF_AIR_IDS[0]];
+const ADD_256_LADDER_AIR_IDS: &[usize] = &[ADD_256_AIR_IDS[0], ADD_256_SMALL_AIR_IDS[0]];
 use zisk_precomp_arith_eq::{
     ArithEqCollector, ArithEqCounterInputGen, ArithEqInstance, ArithEqManager,
     ARITH_EQ_CONFIG_AIR_IDS,
@@ -61,7 +63,7 @@ use zisk_precomp_twisted_edwards::{
 crate::register_precompiles! {
     Keccakf [
         op: KECCAK_OP_TYPE_ID,
-        air: KECCAKF_AIR_IDS,
+        air: KECCAKF_LADDER_AIR_IDS,
         rank_assign: true,
     ] => KeccakfManager<F>,
     Sha256f [
@@ -106,7 +108,7 @@ crate::register_precompiles! {
     ] => ArithEq384Manager<F>,
     Add256 [
         op: BIG_INT_OP_TYPE_ID,
-        air: ADD_256_AIR_IDS,
+        air: ADD_256_LADDER_AIR_IDS,
         rank_assign: false,
     ] => Add256Manager<F>,
     TwistedEdwards [
@@ -141,8 +143,23 @@ mod tests {
         registered.sort_unstable();
         assert_eq!(
             registered,
-            family(|n| n.starts_with("Arith") && n != "Arith" && !n.starts_with("ArithEq384"))
+            family(|n| {
+                n.starts_with("Arith")
+                    && n != "Arith"
+                    && n != "ArithSmall"
+                    && !n.starts_with("ArithEq384")
+            })
         );
+    }
+
+    #[test]
+    fn every_keccakf_and_add256_height_has_a_state_machine() {
+        let mut keccakf = KECCAKF_LADDER_AIR_IDS.to_vec();
+        keccakf.sort_unstable();
+        assert_eq!(keccakf, family(|n| n.starts_with("Keccakf")));
+        let mut add256 = ADD_256_LADDER_AIR_IDS.to_vec();
+        add256.sort_unstable();
+        assert_eq!(add256, family(|n| n.starts_with("Add256")));
     }
 
     #[test]

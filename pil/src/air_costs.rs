@@ -76,6 +76,9 @@ pub const MEM_ALIGN_READ_BYTE_LARGE_INSTANCE_COST: usize = 8858;
 /// `Arith`: 4.41 GB.
 pub const ARITH_INSTANCE_COST: usize = 4516;
 
+/// `ArithSmall`: 0.95 GB.
+pub const ARITH_SMALL_INSTANCE_COST: usize = 973;
+
 /// `Binary`: 6.51 GB.
 pub const BINARY_INSTANCE_COST: usize = 6666;
 
@@ -106,11 +109,17 @@ pub const BINARY_ADD_HI_HUGE_INSTANCE_COST: usize = 8786;
 /// `BinaryExtension`: 6.39 GB.
 pub const BINARY_EXTENSION_INSTANCE_COST: usize = 6543;
 
+/// `BinaryExtensionSmall`: 2.57 GB.
+pub const BINARY_EXTENSION_SMALL_INSTANCE_COST: usize = 2632;
+
 /// `BinaryExtensionLarge`: 9.64 GB.
 pub const BINARY_EXTENSION_LARGE_INSTANCE_COST: usize = 9871;
 
 /// `Add256`: 2.32 GB.
 pub const ADD_256_INSTANCE_COST: usize = 2376;
+
+/// `Add256Small`: 0.03 GB.
+pub const ADD_256_SMALL_INSTANCE_COST: usize = 31;
 
 /// `ArithEq`: 2.12 GB.
 pub const ARITH_EQ_INSTANCE_COST: usize = 2171;
@@ -149,6 +158,9 @@ pub const TWISTED_EDWARDS_INSTANCE_COST: usize = 543;
 /// `Keccakf`: 20.08 GB.
 pub const KECCAKF_INSTANCE_COST: usize = 20562;
 
+/// `KeccakfHalf`: 10.04 GB.
+pub const KECCAKF_HALF_INSTANCE_COST: usize = 10281;
+
 /// `Sha256f`: 0.74 GB.
 pub const SHA_256_F_INSTANCE_COST: usize = 758;
 
@@ -169,6 +181,9 @@ pub const POSEIDON_2_KOALA_BEAR_INSTANCE_COST: usize = 8233;
 
 /// `Dma`: 3.29 GB.
 pub const DMA_INSTANCE_COST: usize = 3369;
+
+/// `DmaSmall`: 0.68 GB.
+pub const DMA_SMALL_INSTANCE_COST: usize = 696;
 
 /// `Dma64Aligned`: 3.79 GB.
 pub const DMA_64_ALIGNED_INSTANCE_COST: usize = 3881;
@@ -193,6 +208,9 @@ pub const DMA_UNALIGNED_INSTANCE_COST: usize = 2755;
 
 /// `DmaPrePost`: 4.63 GB.
 pub const DMA_PRE_POST_INSTANCE_COST: usize = 4741;
+
+/// `DmaPrePostSmall`: 1.00 GB.
+pub const DMA_PRE_POST_SMALL_INSTANCE_COST: usize = 1024;
 
 /// `JumpDest`: 3.40 GB.
 pub const JUMP_DEST_INSTANCE_COST: usize = 3482;
@@ -266,6 +284,7 @@ mod tests {
                     MemAlignByteLargeTrace: MemAlignByteLargeTraceRow: MEM_ALIGN_BYTE_LARGE_INSTANCE_COST,
                     MemAlignReadByteLargeTrace: MemAlignReadByteLargeTraceRow: MEM_ALIGN_READ_BYTE_LARGE_INSTANCE_COST,
                     ArithTrace: ArithTraceRow: ARITH_INSTANCE_COST,
+                    ArithSmallTrace: ArithSmallTraceRow: ARITH_SMALL_INSTANCE_COST,
                     BinaryTrace: BinaryTraceRow: BINARY_INSTANCE_COST,
                     BinaryLargeTrace: BinaryLargeTraceRow: BINARY_LARGE_INSTANCE_COST,
                     BinaryHugeTrace: BinaryHugeTraceRow: BINARY_HUGE_INSTANCE_COST,
@@ -276,8 +295,10 @@ mod tests {
                     BinaryAddHiLargeTrace: BinaryAddHiLargeTraceRow: BINARY_ADD_HI_LARGE_INSTANCE_COST,
                     BinaryAddHiHugeTrace: BinaryAddHiHugeTraceRow: BINARY_ADD_HI_HUGE_INSTANCE_COST,
                     BinaryExtensionTrace: BinaryExtensionTraceRow: BINARY_EXTENSION_INSTANCE_COST,
+                    BinaryExtensionSmallTrace: BinaryExtensionSmallTraceRow: BINARY_EXTENSION_SMALL_INSTANCE_COST,
                     BinaryExtensionLargeTrace: BinaryExtensionLargeTraceRow: BINARY_EXTENSION_LARGE_INSTANCE_COST,
                     Add256Trace: Add256TraceRow: ADD_256_INSTANCE_COST,
+                    Add256SmallTrace: Add256SmallTraceRow: ADD_256_SMALL_INSTANCE_COST,
                     ArithEqTrace: ArithEqTraceRow: ARITH_EQ_INSTANCE_COST,
                     ArithEqLargeTrace: ArithEqLargeTraceRow: ARITH_EQ_LARGE_INSTANCE_COST,
                     Arith256XTrace: Arith256XTraceRow: ARITH_256_X_INSTANCE_COST,
@@ -290,6 +311,7 @@ mod tests {
                     ArithEq384LargeTrace: ArithEq384LargeTraceRow: ARITH_EQ_384_LARGE_INSTANCE_COST,
                     TwistedEdwardsTrace: TwistedEdwardsTraceRow: TWISTED_EDWARDS_INSTANCE_COST,
                     KeccakfTrace: KeccakfTraceRow: KECCAKF_INSTANCE_COST,
+                    KeccakfHalfTrace: KeccakfHalfTraceRow: KECCAKF_HALF_INSTANCE_COST,
                     Sha256fTrace: Sha256fTraceRow: SHA_256_F_INSTANCE_COST,
                     PoseidonTrace: PoseidonTraceRow: POSEIDON_INSTANCE_COST,
                     Blake2brTrace: Blake2brTraceRow: BLAKE_2_BR_INSTANCE_COST,
@@ -297,6 +319,7 @@ mod tests {
                     Blake2sTrace: Blake2sTraceRow: BLAKE_2_S_INSTANCE_COST,
                     Poseidon2KoalaBearTrace: Poseidon2KoalaBearTraceRow: POSEIDON_2_KOALA_BEAR_INSTANCE_COST,
                     DmaTrace: DmaTraceRow: DMA_INSTANCE_COST,
+                    DmaSmallTrace: DmaSmallTraceRow: DMA_SMALL_INSTANCE_COST,
                     Dma64AlignedTrace: Dma64AlignedTraceRow: DMA_64_ALIGNED_INSTANCE_COST,
                     Dma64AlignedLargeTrace: Dma64AlignedLargeTraceRow: DMA_64_ALIGNED_LARGE_INSTANCE_COST,
                     Dma64AlignedMemSetTrace: Dma64AlignedMemSetTraceRow: DMA_64_ALIGNED_MEM_SET_INSTANCE_COST,
@@ -305,6 +328,7 @@ mod tests {
                     Dma64AlignedMemCpyTrace: Dma64AlignedMemCpyTraceRow: DMA_64_ALIGNED_MEM_CPY_INSTANCE_COST,
                     DmaUnalignedTrace: DmaUnalignedTraceRow: DMA_UNALIGNED_INSTANCE_COST,
                     DmaPrePostTrace: DmaPrePostTraceRow: DMA_PRE_POST_INSTANCE_COST,
+                    DmaPrePostSmallTrace: DmaPrePostSmallTraceRow: DMA_PRE_POST_SMALL_INSTANCE_COST,
                     JumpDestTrace: JumpDestTraceRow: JUMP_DEST_INSTANCE_COST,
                 );
     }

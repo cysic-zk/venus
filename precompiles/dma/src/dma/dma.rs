@@ -3,27 +3,41 @@ use std::sync::Arc;
 use proofman_fields::PrimeField64;
 use rayon::prelude::*;
 
-use proofman_common::{AirInstance, FromTrace, ProofmanResult};
+use proofman_common::{AirInstance, FromTrace, GenericTrace, ProofmanResult};
 use proofman_util::{timer_start_trace, timer_stop_and_log_trace};
 use std::marker::PhantomData;
 use zisk_core::zisk_ops::ZiskOp;
-use zisk_pil::{DmaTrace, DmaTraceRow, DmaTraceRowOps, DmaTraceRowPacked};
+use zisk_pil::{
+    DmaSmallTrace, DmaTrace, DmaTraceRow, DmaTraceRowOps, DmaTraceRowPacked, ZISK_AIRGROUP_ID,
+};
 
 use crate::{dma_trace, DmaInput, DmaModule};
 use zisk_precomp_helpers::DmaInfo;
 
+const ROWS: usize = DmaTrace::<()>::NUM_ROWS;
+const AIR_ID: usize = DmaTrace::<()>::AIR_ID;
+const SMALL_ROWS: usize = DmaSmallTrace::<()>::NUM_ROWS;
+const SMALL_AIR_ID: usize = DmaSmallTrace::<()>::AIR_ID;
+
 /// The `DmaSM` struct encapsulates the logic of the Dma State Machine.
+///
+/// One instance of it serves one air: `air_id` says which of the two heights (`Dma`, `DmaSmall`)
+/// this one builds. The heights commit the same columns, so the row layout is shared.
 pub struct DmaSM<F: PrimeField64> {
     _phantom: PhantomData<F>,
+
+    /// The air this state machine builds traces for: [`AIR_ID`] or [`SMALL_AIR_ID`].
+    air_id: usize,
 }
 
 impl<F: PrimeField64> DmaSM<F> {
-    /// Creates a new Dma State Machine instance.
+    /// Creates a new Dma State Machine instance for the air `air_id`.
     ///
     /// # Returns
     /// A new `DmaSM` instance.
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self { _phantom: PhantomData })
+    pub fn new(air_id: usize) -> Arc<Self> {
+        assert!(air_id == AIR_ID || air_id == SMALL_AIR_ID, "DmaSM: unsupported air_id {air_id}");
+        Arc::new(Self { _phantom: PhantomData, air_id })
     }
 
     /// Processes a slice of operation data, updating the trace.
@@ -146,12 +160,19 @@ impl<F: PrimeField64> DmaSM<F> {
         trace.set_count_lt_256(true);
     }
 
-    fn compute_witness_inner<R: DmaTraceRowOps<F> + Copy + Send>(
+    fn compute_witness_inner<
+        R: DmaTraceRowOps<F> + Copy + Send,
+        const NUM_ROWS: usize,
+        const TRACE_AIR_ID: usize,
+    >(
         &self,
         inputs: &[Vec<DmaInput>],
         trace_buffer: Vec<F>,
     ) -> ProofmanResult<AirInstance<F>> {
-        let mut trace = DmaTrace::<R>::new_from_vec_zeroes(trace_buffer)?;
+        let mut trace =
+            GenericTrace::<R, NUM_ROWS, ZISK_AIRGROUP_ID, TRACE_AIR_ID>::new_from_vec_zeroes(
+                trace_buffer,
+            )?;
         let num_rows = trace.num_rows();
 
         let total_inputs: usize = inputs.iter().map(|c| c.len()).sum();
@@ -198,10 +219,20 @@ impl<F: PrimeField64> DmaModule<F> for DmaSM<F> {
         trace_buffer: Vec<F>,
         packed: bool,
     ) -> ProofmanResult<AirInstance<F>> {
-        if packed {
-            self.compute_witness_inner::<DmaTraceRowPacked<F>>(inputs, trace_buffer)
-        } else {
-            self.compute_witness_inner::<DmaTraceRow<F>>(inputs, trace_buffer)
+        match (self.air_id == SMALL_AIR_ID, packed) {
+            (false, true) => self
+                .compute_witness_inner::<DmaTraceRowPacked<F>, ROWS, AIR_ID>(inputs, trace_buffer),
+            (false, false) => {
+                self.compute_witness_inner::<DmaTraceRow<F>, ROWS, AIR_ID>(inputs, trace_buffer)
+            }
+            (true, true) => self.compute_witness_inner::<DmaTraceRowPacked<F>, SMALL_ROWS, SMALL_AIR_ID>(
+                inputs,
+                trace_buffer,
+            ),
+            (true, false) => self.compute_witness_inner::<DmaTraceRow<F>, SMALL_ROWS, SMALL_AIR_ID>(
+                inputs,
+                trace_buffer,
+            ),
         }
     }
 }

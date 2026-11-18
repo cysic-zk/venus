@@ -58,11 +58,13 @@ use zisk_common::{
 };
 use zisk_pil::{
     BinaryAddHiHugeTrace, BinaryAddHiLargeTrace, BinaryAddHiTrace, BinaryAddHugeTrace,
-    BinaryAddLargeTrace, BinaryAddTrace, BinaryExtensionLargeTrace, BinaryExtensionTrace,
-    BinaryHugeTrace, BinaryLargeTrace, BinaryTrace, BINARY_ADD_HI_HUGE_INSTANCE_COST,
+    BinaryAddLargeTrace, BinaryAddTrace, BinaryExtensionLargeTrace, BinaryExtensionSmallTrace,
+    BinaryExtensionTrace, BinaryHugeTrace, BinaryLargeTrace, BinaryTrace,
+    BINARY_ADD_HI_HUGE_INSTANCE_COST,
     BINARY_ADD_HI_INSTANCE_COST, BINARY_ADD_HI_LARGE_INSTANCE_COST, BINARY_ADD_HUGE_INSTANCE_COST,
     BINARY_ADD_INSTANCE_COST, BINARY_ADD_LARGE_INSTANCE_COST, BINARY_EXTENSION_INSTANCE_COST,
-    BINARY_EXTENSION_LARGE_INSTANCE_COST, BINARY_HUGE_INSTANCE_COST, BINARY_INSTANCE_COST,
+    BINARY_EXTENSION_LARGE_INSTANCE_COST, BINARY_EXTENSION_SMALL_INSTANCE_COST,
+    BINARY_HUGE_INSTANCE_COST, BINARY_INSTANCE_COST,
     BINARY_LARGE_INSTANCE_COST,
 };
 
@@ -133,7 +135,7 @@ fn add_memories() -> InstanceCounts {
     ]
 }
 
-/// The two extension airs as a size ladder, tallest last so [`select_sizes`] can order them.
+/// The extension airs as a size ladder (two packings at the tall height, one short air).
 fn ext_ladder() -> [AirChoice; EXT_AIRS] {
     // `AirChoice::rows` is the capacity the choice offers, which for these airs is rows times the
     // lanes they pack: they are all the same height and differ only in the packing.
@@ -150,6 +152,12 @@ fn ext_ladder() -> [AirChoice; EXT_AIRS] {
             BinaryExtensionTrace::<()>::AIR_ID,
             ops(BinaryExtensionTrace::<()>::NUM_ROWS, lanes_x_row::EXT),
             BINARY_EXTENSION_INSTANCE_COST,
+        ),
+        AirChoice::new(
+            BinaryExtensionSmallTrace::<()>::AIRGROUP_ID,
+            BinaryExtensionSmallTrace::<()>::AIR_ID,
+            ops(BinaryExtensionSmallTrace::<()>::NUM_ROWS, lanes_x_row::EXT),
+            BINARY_EXTENSION_SMALL_INSTANCE_COST,
         ),
     ]
 }
@@ -407,7 +415,7 @@ impl<F: PrimeField64> Planner for BinaryPlanner<F> {
         let ext_counts = select_sizes(totals.ext, &ext_ladder());
 
         let mut add_airs = add_family(add_counts);
-        let mut ext_airs = ext_family([ext_counts[0], ext_counts[1]]);
+        let mut ext_airs = ext_family([ext_counts[0], ext_counts[1], ext_counts[2]]);
 
         // The sizing above only saw operations. A kind whose operations are all frequent would be left
         // with no air to account for them, so coverage is topped up here.
@@ -429,7 +437,7 @@ impl<F: PrimeField64> Planner for BinaryPlanner<F> {
 
         tracing::debug!(
             "··· Binary instances: add_hi_large={} add_hi={} add_large={} add={} basic_large={} \
-             basic={} ext_large={} ext={}",
+             basic={} ext_large={} ext={} ext_small={}",
             add_airs[0].instances,
             add_airs[1].instances,
             add_airs[2].instances,
@@ -438,6 +446,7 @@ impl<F: PrimeField64> Planner for BinaryPlanner<F> {
             add_airs[5].instances,
             ext_airs[0].instances,
             ext_airs[1].instances,
+            ext_airs[2].instances,
         );
 
         let mut plans = Self::plans_of(&add_ops, &add_frops, &add_airs);
@@ -496,7 +505,7 @@ mod tests {
         let counts = TestPlanner::best_add_counts(&Totals::default());
         assert_eq!(counts, InstanceCounts::default());
         assert_eq!(TestPlanner::cost_of(&counts), Cost::default());
-        assert_eq!(select_sizes(0, &ext_ladder()), vec![0, 0]);
+        assert_eq!(select_sizes(0, &ext_ladder()), vec![0; EXT_AIRS]);
     }
 
     /// The whole point of the new criterion: work that would need two short instances is given one

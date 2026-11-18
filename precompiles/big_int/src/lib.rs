@@ -8,9 +8,17 @@ pub use add256_constants::*;
 zisk_common::zisk_precompile! {
     name = Add256,
     op_type = BigInt,
-    trace = Add256Trace,
-    num_available = ::zisk_pil::Add256Trace::<()>::NUM_ROWS,
-    cost = ::zisk_pil::ADD_256_INSTANCE_COST,
+    row = Add256Trace,
+    // The same air at two heights: blocks usually carry a few hundred additions, which the short
+    // air holds at a sixty-fourth of the tall one's cost.
+    traces = [
+        (Add256Trace, ::zisk_pil::Add256Trace::<()>::NUM_ROWS, ::zisk_pil::ADD_256_INSTANCE_COST),
+        (
+            Add256SmallTrace,
+            ::zisk_pil::Add256SmallTrace::<()>::NUM_ROWS,
+            ::zisk_pil::ADD_256_SMALL_INSTANCE_COST
+        ),
+    ],
     ops = [
         (OperationAdd256Data, Add256Input),
     ],

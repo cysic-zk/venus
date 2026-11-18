@@ -15,13 +15,15 @@ use zisk_common::{
 };
 use zisk_pil::{
     BinaryExtensionLargeTrace, BinaryExtensionLargeTraceRow, BinaryExtensionLargeTraceRowPacked,
-    BinaryExtensionTrace, BinaryExtensionTraceRow, BinaryExtensionTraceRowPacked,
+    BinaryExtensionSmallTrace, BinaryExtensionTrace, BinaryExtensionTraceRow,
+    BinaryExtensionTraceRowPacked,
 };
 
 /// Air id of each `BinaryExtension` air. They no longer differ only in height: each packs a
 /// different number of operations per row, so each has its own row type.
 const AIR_ID: usize = BinaryExtensionTrace::<()>::AIR_ID;
 const LARGE_AIR_ID: usize = BinaryExtensionLargeTrace::<()>::AIR_ID;
+const SMALL_AIR_ID: usize = BinaryExtensionSmallTrace::<()>::AIR_ID;
 
 /// The `BinaryExtensionInstance` struct represents an instance for binary extension-related witness
 /// computations.
@@ -60,7 +62,7 @@ impl<F: PrimeField64> BinaryExtensionInstance<F> {
         std: Arc<Std<F>>,
     ) -> Self {
         assert!(
-            matches!(ictx.plan.air_id, AIR_ID | LARGE_AIR_ID),
+            matches!(ictx.plan.air_id, AIR_ID | LARGE_AIR_ID | SMALL_AIR_ID),
             "BinaryExtensionInstance: Unsupported air_id: {:?}",
             ictx.plan.air_id
         );
@@ -121,16 +123,22 @@ impl<F: PrimeField64> Instance<F> for BinaryExtensionInstance<F> {
         // Each air packs a different number of operations per row, so each has its own row type
         // and the trace it builds carries the height and air id.
         match (self.air_id(), packed) {
-            (AIR_ID, true) => Ok(Some(
-                self.binary_extension_sm.compute_witness::<_, BinaryExtensionTraceRowPacked<F>>(
-                    &inputs,
-                    trace_buffer,
-                )?,
-            )),
-            (AIR_ID, false) => Ok(Some(
-                self.binary_extension_sm
-                    .compute_witness::<_, BinaryExtensionTraceRow<F>>(&inputs, trace_buffer)?,
-            )),
+            (AIR_ID, true) => Ok(Some(self.binary_extension_sm.compute_witness::<
+                BinaryExtensionTrace<BinaryExtensionTraceRowPacked<F>>,
+                BinaryExtensionTraceRowPacked<F>,
+            >(&inputs, trace_buffer)?)),
+            (AIR_ID, false) => Ok(Some(self.binary_extension_sm.compute_witness::<
+                BinaryExtensionTrace<BinaryExtensionTraceRow<F>>,
+                BinaryExtensionTraceRow<F>,
+            >(&inputs, trace_buffer)?)),
+            (SMALL_AIR_ID, true) => Ok(Some(self.binary_extension_sm.compute_witness::<
+                BinaryExtensionSmallTrace<BinaryExtensionTraceRowPacked<F>>,
+                BinaryExtensionTraceRowPacked<F>,
+            >(&inputs, trace_buffer)?)),
+            (SMALL_AIR_ID, false) => Ok(Some(self.binary_extension_sm.compute_witness::<
+                BinaryExtensionSmallTrace<BinaryExtensionTraceRow<F>>,
+                BinaryExtensionTraceRow<F>,
+            >(&inputs, trace_buffer)?)),
             (LARGE_AIR_ID, true) => Ok(Some(
                 self.binary_extension_sm
                     .compute_witness::<_, BinaryExtensionLargeTraceRowPacked<F>>(

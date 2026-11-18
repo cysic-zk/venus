@@ -4,5 +4,8 @@
   },
   "Poseidon2KoalaBear": {
     "hasCompressor": true
+  },
+  "KeccakfHalf": {
+    "hasCompressor": true
   }
 }
