@@ -302,7 +302,7 @@ template parallel {{ verify_evaluations_name }}() {
 }
 {% endfor %}
 
-{% for chunk in fri_once_chunks %}template CalculateFRIConstantsChunks{{ chunk.idx }}() {
+{% for chunk in fri_once_chunks %}template CalculateFRIConstantsChunks{{ chunk.idx }}{{ chunk_suffix }}() {
     signal input challengesDeep[2][3];
     signal input evals[{{ ev_map_len }}][3];
 {% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
@@ -801,7 +801,7 @@ template {{ verifier_name }}() {
     ///////////
 {% for chunk in fri_once_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIConstantsChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIConstantsChunks{{ chunk.idx }}{{ chunk_suffix }}()({{ chunk.call_inputs }});
 {% endfor %}
     signal friConsts[{{ n_fri_consts }}][3];
     friConsts[0] <== challengesDeep[0];
