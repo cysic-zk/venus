@@ -7,8 +7,8 @@ use std::fs::File;
 use std::io::Write;
 
 use proofman_common::{
-    CurveType, MpiCtx, MemoryHandlerRecursive, Proof, ProofCtx, ProofType, ProofmanResult, ProofmanError, Setup,
-    SetupsVadcop,
+    CurveType, GlobalInfo, MpiCtx, MemoryHandlerRecursive, Proof, ProofCtx, ProofType, ProofmanResult, ProofmanError,
+    Setup, SetupCtx, SetupsVadcop,
 };
 use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS, EXEC_MAGIC};
 use proofman_common::final_witness::FinalWitnessLibrary;
@@ -221,16 +221,140 @@ pub fn gen_witness_recursive_batch<F: PrimeField64>(
     ))
 }
 
-/// Recursive1 circuits per airgroup: `ceil(n / k)` per air.
-pub fn recursive1_counts_per_airgroup(expected: &[Vec<usize>], batch: &[Vec<usize>]) -> Vec<usize> {
+/// Witness for a recursive1 group: one slot per member air (`slots[i]` is a proof of `members[i]` or
+/// empty); an empty slot is zeros the size of its member's proof, plus its flag.
+pub fn gen_witness_recursive_group<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+    setups: &SetupsVadcop<F>,
+    airgroup_id: usize,
+    members: &[usize],
+    slots: &[Option<Proof<F>>],
+) -> ProofmanResult<Proof<F>> {
+    let first = slots.iter().flatten().next().ok_or_else(|| ProofmanError::ProofmanError("Empty recursive1 group".into()))?;
+    if slots.len() != members.len() {
+        return Err(ProofmanError::ProofmanError(format!(
+            "Recursive1 group {members:?} has {} slots, got {}",
+            members.len(),
+            slots.len()
+        )));
+    }
+    // Each slot's verifier reads its member's proof layout, empty or not.
+    let mut lens = Vec::with_capacity(members.len());
+    for (&air, slot) in members.iter().zip(slots) {
+        let len = sctx.get_setup(airgroup_id, air)?.proof_size as usize;
+        if let Some(p) = slot {
+            if (p.airgroup_id, p.air_id) != (airgroup_id, air) || p.proof_type != ProofType::Basic {
+                return Err(ProofmanError::InvalidProof(format!(
+                    "Recursive1 group slot for air [{airgroup_id}:{air}] got a {:?} of [{}:{}]",
+                    p.proof_type, p.airgroup_id, p.air_id
+                )));
+            }
+            if p.proof.len() != len {
+                return Err(ProofmanError::InvalidProof(format!(
+                    "Recursive1 group slot for air [{airgroup_id}:{air}]: proof of {} words, the setup says {len}",
+                    p.proof.len()
+                )));
+            }
+        }
+        lens.push(len);
+    }
+    let leader = members[0];
+    let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, leader)?;
+    let recursive2_setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
+    let publics_circom_size =
+        pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
+    // circom's input order: publics, each slot's proof, the null flags.
+    let total = publics_circom_size + lens.iter().sum::<usize>() + members.len();
+    let mut zkin: Vec<u64> = vec![0; total];
+    let mut at = publics_circom_size;
+    for (slot, &len) in slots.iter().zip(&lens) {
+        if let Some(p) = slot {
+            zkin[at..at + len].copy_from_slice(&p.proof);
+        }
+        at += len;
+    }
+    for (i, slot) in slots.iter().enumerate() {
+        zkin[at + i] = slot.is_none() as u64;
+    }
+    add_publics_circom(&mut zkin, 0, pctx, Some(&recursive2_setup.verkey));
+
+    let global_idx = first.global_idx;
+    tracing::info!(
+        "Recursive1 group [{}:{:?}]: instances {:?}",
+        airgroup_id,
+        members,
+        slots.iter().map(|s| s.as_ref().map(|p| p.global_idx)).collect::<Vec<_>>()
+    );
+    timer_start_debug!(
+        GENERATE_RECURSIVE1_WITNESS,
+        "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
+        global_idx.unwrap_or(0),
+        airgroup_id,
+        leader
+    );
+    let (trace, publics) = generate_witness::<F>(
+        setup,
+        memory_handler_recursive_witness,
+        global_idx.unwrap_or(0),
+        &zkin,
+        recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
+        memory_handler_recursive_witness.witness_threads(),
+    )?;
+    timer_stop_and_log_debug_net!(
+        GENERATE_RECURSIVE1_WITNESS,
+        proofman_common::take_buffer_wait(trace.as_ptr() as *const u8),
+        "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
+        global_idx.unwrap_or(0),
+        airgroup_id,
+        leader
+    );
+    Ok(Proof::new_witness(
+        ProofType::Recursive1,
+        airgroup_id,
+        leader,
+        global_idx,
+        trace,
+        publics,
+        setup.n_cols as usize,
+    ))
+}
+
+/// Each airgroup's recursive1 groups (member air ids in slot order), from the leaders' entries.
+pub fn recursive1_groups(global_info: &GlobalInfo) -> Vec<Vec<Vec<usize>>> {
+    (0..global_info.air_groups.len())
+        .map(|ag| {
+            (0..global_info.get_n_airs_for_airgroup(ag))
+                .filter_map(|air| global_info.get_air_r1_group(ag, air).filter(|m| m[0] == air).map(|m| m.to_vec()))
+                .collect()
+        })
+        .collect()
+}
+
+/// Recursive1 circuits per airgroup: `ceil(n / k)` per air, except that a group (`groups[ag]`, member
+/// air ids) counts once for its members: as many circuits as its most planned member has inputs, since
+/// each takes at most one input of every member.
+pub fn recursive1_counts_per_airgroup(
+    expected: &[Vec<usize>],
+    batch: &[Vec<usize>],
+    groups: &[Vec<Vec<usize>>],
+) -> Vec<usize> {
     expected
         .iter()
         .enumerate()
         .map(|(ag, airs)| {
-            airs.iter()
+            let ag_groups = groups.get(ag).map(Vec::as_slice).unwrap_or(&[]);
+            let grouped = |air: usize| ag_groups.iter().any(|g| g.contains(&air));
+            let single: usize = airs
+                .iter()
                 .enumerate()
+                .filter(|(air, _)| !grouped(*air))
                 .map(|(air, &n)| n.div_ceil(batch.get(ag).and_then(|b| b.get(air)).copied().unwrap_or(1).max(1)))
-                .sum()
+                .sum();
+            let group: usize =
+                ag_groups.iter().map(|g| g.iter().map(|&air| airs.get(air).copied().unwrap_or(0)).max().unwrap_or(0)).sum();
+            single + group
         })
         .collect()
 }
@@ -240,8 +364,23 @@ fn should_flush(in_slot: usize, k: usize, seen: usize, planned: usize) -> bool {
     in_slot >= k || seen >= planned
 }
 
-/// Collects one air's proofs until its batch is full or its last planned proof arrives. The plan
-/// is exact: tables skip before it is read, and every planned instance is armed in the proof ledger.
+/// A group may fold when it holds something and every member either has an input waiting or will
+/// send no more. Folding then takes one input of every member that has one, so a group folds exactly
+/// as many times as its most planned member has inputs.
+fn group_can_fold(waiting: &[usize], seen: &[usize], planned: &[usize]) -> bool {
+    waiting.iter().any(|&w| w > 0) && (0..waiting.len()).all(|m| waiting[m] > 0 || seen[m] >= planned[m])
+}
+
+/// One recursive1 group's inputs waiting for slot-mates, per member.
+struct GroupSlots<F: PrimeField64> {
+    members: Vec<usize>,
+    waiting: Vec<std::collections::VecDeque<Proof<F>>>,
+    seen: Vec<usize>,
+}
+
+/// Collects one air's proofs until its batch is full or its last planned proof arrives, and a recursive1
+/// group's proofs until `group_can_fold`. The plan is exact: tables skip before it is read, and every
+/// planned instance is armed in the proof ledger.
 pub struct Recursive1Batcher<F: PrimeField64> {
     /// `[airgroup][air]`: proofs waiting for slot-mates.
     slots: Vec<Vec<Mutex<Vec<Proof<F>>>>>,
@@ -249,29 +388,89 @@ pub struct Recursive1Batcher<F: PrimeField64> {
     seen: Vec<Vec<AtomicUsize>>,
     /// `[airgroup][air]`: inputs this process proves for the air.
     planned: Vec<Vec<usize>>,
+    /// `[airgroup][air]`: index into `groups` of the air's recursive1 group.
+    group_of: Vec<Vec<Option<usize>>>,
+    groups: Vec<(usize, Mutex<GroupSlots<F>>)>,
 }
 
 impl<F: PrimeField64> Recursive1Batcher<F> {
-    pub fn new(planned: Vec<Vec<usize>>) -> Self {
+    /// `groups`: each airgroup's recursive1 groups, member air ids in slot order (`recursive1_groups`).
+    pub fn new(planned: Vec<Vec<usize>>, groups: &[Vec<Vec<usize>>]) -> Self {
+        let mut group_of: Vec<Vec<Option<usize>>> = planned.iter().map(|airs| vec![None; airs.len()]).collect();
+        let mut all = Vec::new();
+        for (ag, ag_groups) in groups.iter().enumerate() {
+            for members in ag_groups {
+                for &air in members {
+                    group_of[ag][air] = Some(all.len());
+                }
+                let n = members.len();
+                all.push((
+                    ag,
+                    Mutex::new(GroupSlots {
+                        members: members.clone(),
+                        waiting: (0..n).map(|_| Default::default()).collect(),
+                        seen: vec![0; n],
+                    }),
+                ));
+            }
+        }
         Self {
             slots: planned.iter().map(|airs| airs.iter().map(|_| Mutex::new(Vec::new())).collect()).collect(),
             seen: planned.iter().map(|airs| airs.iter().map(|_| AtomicUsize::new(0)).collect()).collect(),
             planned,
+            group_of,
+            groups: all,
         }
     }
 
-    /// Returns the witness once the batch is complete, `None` while it is still filling.
+    /// The witnesses this proof completes: none while its batch or group is still filling, possibly
+    /// several when it is a group's last awaited input.
     pub fn offer(
         &self,
         pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
         memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
         setups: &SetupsVadcop<F>,
         proof: Proof<F>,
-    ) -> ProofmanResult<Option<Proof<F>>> {
+    ) -> ProofmanResult<Vec<Proof<F>>> {
         let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
+        if let Some(g) = self.group_of[airgroup_id][air_id] {
+            let (ag, group) = &self.groups[g];
+            let mut folds = Vec::new();
+            let members = {
+                let mut st = group.lock().unwrap();
+                let m = st.members.iter().position(|&a| a == air_id).expect("the air is in its group");
+                st.waiting[m].push_back(proof);
+                st.seen[m] += 1;
+                let planned: Vec<usize> = st.members.iter().map(|&a| self.planned[*ag][a]).collect();
+                loop {
+                    let waiting: Vec<usize> = st.waiting.iter().map(|q| q.len()).collect();
+                    if !group_can_fold(&waiting, &st.seen, &planned) {
+                        break;
+                    }
+                    // Taken under the lock, so two streams cannot fold the same proofs.
+                    folds.push(st.waiting.iter_mut().map(|q| q.pop_front()).collect::<Vec<_>>());
+                }
+                st.members.clone()
+            };
+            return folds
+                .iter()
+                .map(|slots| {
+                    gen_witness_recursive_group(
+                        pctx,
+                        sctx,
+                        memory_handler_recursive_witness,
+                        setups,
+                        *ag,
+                        &members,
+                        slots,
+                    )
+                })
+                .collect();
+        }
         let k = pctx.global_info.get_air_r1_batch_size(airgroup_id, air_id);
         if k < 2 {
-            return gen_witness_recursive(pctx, memory_handler_recursive_witness, setups, &proof).map(Some);
+            return gen_witness_recursive(pctx, memory_handler_recursive_witness, setups, &proof).map(|w| vec![w]);
         }
 
         let chunk = {
@@ -279,14 +478,14 @@ impl<F: PrimeField64> Recursive1Batcher<F> {
             slot.push(proof);
             let seen = self.seen[airgroup_id][air_id].fetch_add(1, Ordering::AcqRel) + 1;
             if !should_flush(slot.len(), k, seen, self.planned[airgroup_id][air_id]) {
-                return Ok(None);
+                return Ok(Vec::new());
             }
             // Taken under the lock, so two streams cannot flush the same proofs.
             std::mem::take(&mut *slot)
         };
 
         let refs: Vec<&Proof<F>> = chunk.iter().collect();
-        gen_witness_recursive_batch(pctx, memory_handler_recursive_witness, setups, &refs).map(Some)
+        gen_witness_recursive_batch(pctx, memory_handler_recursive_witness, setups, &refs).map(|w| vec![w])
     }
 }
 
@@ -355,7 +554,12 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             proof.airgroup_id,
             proof.air_id
         );
-        // The batched circuit reads another layout; this one would produce a wrong witness.
+        // The batched and group circuits read another layout; this one would produce a wrong witness.
+        if pctx.global_info.get_air_r1_group(airgroup_id, air_id).is_some() {
+            return Err(ProofmanError::ProofmanError(format!(
+                "Air [{airgroup_id}:{air_id}] is in a recursive1 group; use gen_witness_recursive_group"
+            )));
+        }
         let batch = pctx.global_info.get_air_r1_batch_size(airgroup_id, air_id);
         if batch > 1 {
             return Err(ProofmanError::ProofmanError(format!(
@@ -1723,7 +1927,55 @@ pub fn total_recursive_proofs(mut n: usize, arity: usize) -> Recursive2Proofs {
 
 #[cfg(test)]
 mod batcher_tests {
-    use super::{recursive1_counts_per_airgroup, should_flush};
+    use super::{group_can_fold, recursive1_counts_per_airgroup, should_flush};
+
+    /// Folds of a group whose members plan `planned` inputs, fed in `order` (member indices).
+    fn group_folds(planned: &[usize], order: &[usize]) -> Vec<Vec<Option<usize>>> {
+        let n = planned.len();
+        let (mut waiting, mut seen, mut folds) = (vec![Vec::new(); n], vec![0usize; n], Vec::new());
+        for (tag, &m) in order.iter().enumerate() {
+            waiting[m].push(tag);
+            seen[m] += 1;
+            while group_can_fold(&waiting.iter().map(Vec::len).collect::<Vec<_>>(), &seen, planned) {
+                folds.push(waiting.iter_mut().map(|q| (!q.is_empty()).then(|| q.remove(0))).collect());
+            }
+        }
+        assert!(waiting.iter().all(Vec::is_empty), "{planned:?} {order:?}: inputs left unfolded");
+        folds
+    }
+
+    /// The tree counts the group's circuits before proving: every arrival order must fold exactly as
+    /// promised, each input once, never two of one member in a fold.
+    #[test]
+    fn a_group_folds_exactly_the_promised_count_in_any_order() {
+        for planned in [vec![1, 1], vec![2, 1], vec![0, 3], vec![3, 2], vec![1, 0, 2], vec![2, 2, 2]] {
+            let order: Vec<usize> = planned.iter().enumerate().flat_map(|(m, &n)| vec![m; n]).collect();
+            for rotation in 0..order.len() {
+                for reversed in [false, true] {
+                    let mut o = order.clone();
+                    o.rotate_left(rotation);
+                    if reversed {
+                        o.reverse();
+                    }
+                    let folds = group_folds(&planned, &o);
+                    let groups = vec![vec![(0..planned.len()).collect::<Vec<_>>()]];
+                    assert_eq!(folds.len(), recursive1_counts_per_airgroup(&[planned.clone()], &[], &groups)[0]);
+                    let mut tags: Vec<usize> = folds.iter().flatten().flatten().copied().collect();
+                    tags.sort();
+                    assert_eq!(tags, (0..o.len()).collect::<Vec<_>>(), "{planned:?} {o:?}: lost or duplicated");
+                    assert!(folds.iter().all(|f| f.iter().any(Option::is_some)), "an empty fold");
+                }
+            }
+        }
+    }
+
+    /// Grouped airs count by group, the rest by their own batch size.
+    #[test]
+    fn counts_take_groups_once() {
+        // airs 0 (k=2, 5 inputs), 1 and 3 grouped (2 and 1 inputs), 2 alone (3 inputs) -> 3 + 2 + 3.
+        let counts = recursive1_counts_per_airgroup(&[vec![5, 2, 3, 1]], &[vec![2, 1, 1, 1]], &[vec![vec![1, 3]]]);
+        assert_eq!(counts, vec![8]);
+    }
 
     /// Batch sizes for `n` planned offers at batch size `k`.
     fn sizes(n: usize, k: usize) -> Vec<usize> {
@@ -1746,7 +1998,7 @@ mod batcher_tests {
             for n in 0..40 {
                 let s = sizes(n, k);
                 assert_eq!(s.iter().sum::<usize>(), n, "k={k} n={n}: proofs lost or duplicated");
-                assert_eq!(s.len(), recursive1_counts_per_airgroup(&[vec![n]], &[vec![k]])[0], "k={k} n={n}");
+                assert_eq!(s.len(), recursive1_counts_per_airgroup(&[vec![n]], &[vec![k]], &[])[0], "k={k} n={n}");
                 assert!(s.iter().all(|&x| x <= k), "k={k} n={n}: a batch overflowed its slots");
                 assert!(s.iter().rev().skip(1).all(|&x| x == k), "k={k} n={n}: only the tail may be short");
             }
@@ -1756,15 +2008,15 @@ mod batcher_tests {
     #[test]
     fn counts_sum_over_the_airs_of_an_airgroup() {
         // airgroup 0: 10 instances at k=5 and 7 at k=2 -> 2 + 4; airgroup 1: 3 at k=1 -> 3.
-        let counts = recursive1_counts_per_airgroup(&[vec![10, 7], vec![3]], &[vec![5, 2], vec![1]]);
+        let counts = recursive1_counts_per_airgroup(&[vec![10, 7], vec![3]], &[vec![5, 2], vec![1]], &[]);
         assert_eq!(counts, vec![6, 3]);
     }
 
     /// A missing or zero batch size reads as unbatched rather than dividing by zero.
     #[test]
     fn empty_airs_and_absent_batch_sizes() {
-        assert_eq!(recursive1_counts_per_airgroup(&[vec![0, 4]], &[vec![5, 0]]), vec![4]);
-        assert_eq!(recursive1_counts_per_airgroup(&[vec![4]], &[]), vec![4]);
+        assert_eq!(recursive1_counts_per_airgroup(&[vec![0, 4]], &[vec![5, 0]], &[]), vec![4]);
+        assert_eq!(recursive1_counts_per_airgroup(&[vec![4]], &[], &[]), vec![4]);
     }
 }
 

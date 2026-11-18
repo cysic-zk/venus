@@ -120,12 +120,17 @@ pub struct GlobalInfoAir {
     #[serde(rename = "r1BatchSize", default)]
     pub r1_batch_size: Option<usize>,
 
+    /// The airs (ids, in slot order) whose recursive1 is one shared circuit with this one, a slot
+    /// each. Absent for an air with a recursive1 of its own.
+    #[serde(rename = "r1Group", default)]
+    pub r1_group: Option<Vec<usize>>,
+
     pub num_rows: usize,
 }
 
 impl GlobalInfoAir {
     pub fn new(name: String) -> Self {
-        Self { name, has_compressor: None, r1_batch_size: None, num_rows: 0 }
+        Self { name, has_compressor: None, r1_batch_size: None, r1_group: None, num_rows: 0 }
     }
 }
 
@@ -297,6 +302,11 @@ impl GlobalInfo {
     /// Proofs this air's recursive1 verifies in one circuit; 1 for the unbatched circuit.
     pub fn get_air_r1_batch_size(&self, airgroup_id: usize, air_id: usize) -> usize {
         self.airs[airgroup_id][air_id].r1_batch_size.unwrap_or(1).max(1)
+    }
+
+    /// The air ids sharing this air's recursive1 circuit, in slot order, if it is in a group.
+    pub fn get_air_r1_group(&self, airgroup_id: usize, air_id: usize) -> Option<&[usize]> {
+        self.airs[airgroup_id][air_id].r1_group.as_deref()
     }
 
     pub fn get_n_airs_for_airgroup(&self, airgroup_id: usize) -> usize {

@@ -313,6 +313,7 @@ fn gen_final_snark(
         enable_input: false,
         input_challenges: false,
         hash: config.hash.to_string(),
+        template_suffix: None,
     };
     let verifier_circom_final = if blake3 {
         pil2circom_bn128_blake3(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)
@@ -460,6 +461,7 @@ pub fn gen_recursivef_setup(
         enable_input: false,
         input_challenges: false,
         hash: config.hash.to_string(),
+        template_suffix: None,
     };
     let verifier_circom_rf = pil2circom(&const_root_str, stark_info, verifier_info, &pil2circom_opts)
         .context("pil2circom failed for recursivef")?;

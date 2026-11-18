@@ -20,7 +20,7 @@ use serde_json::Value;
 
 pub use templates::{
     gen_recursivef, gen_recursion_final, gen_solidity, gen_iverifier, gen_final_compressed, gen_compressor,
-    gen_recursive1, gen_recursive2, gen_vadcop_final, SnarkVerifier,
+    gen_recursive1, gen_recursive1_group, gen_recursive2, gen_vadcop_final, SnarkVerifier,
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -42,6 +42,12 @@ pub struct CircomGenOptions {
 
 /// Most proofs one recursive1 verifies. A deliberate cap, below the 26 the letter-named slots allow.
 pub const MAX_RECURSIVE1_BATCH: usize = 3;
+
+/// Template suffix of a recursive1 group member's verifier (`StarkVerifier<suffix>`): the setup
+/// generates the verifier under it and the group circuit instantiates it by it.
+pub fn group_verifier_suffix(airgroup_id: usize, air_id: usize) -> String {
+    format!("{airgroup_id}_{air_id}")
+}
 
 /// All inputs for a [`gen_circom_circuit`] call (mirrors `gencircom.js` parameters).
 pub struct GenCircomCircuitInput<'a> {
@@ -99,6 +105,9 @@ pub fn gen_circom_circuit(input: &GenCircomCircuitInput<'_>) -> Result<String> {
         }
         "src/vadcop/templates/compressor.circom.ejs" => {
             templates::gen_compressor(stark_info, input.verifier_filenames, input.vadcop_info, input.options)
+        }
+        "src/vadcop/templates/recursive1.circom.ejs" if input.stark_infos.len() > 1 => {
+            templates::gen_recursive1_group(input.stark_infos, input.verifier_filenames, input.vadcop_info, airgroup_id)
         }
         "src/vadcop/templates/recursive1.circom.ejs" => templates::gen_recursive1(
             stark_info,

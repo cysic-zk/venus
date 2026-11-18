@@ -27,8 +27,9 @@ pub(crate) fn build_global_info_json(
     agg_arity: usize,
     has_compressed_final: bool,
     setup_version: Option<&str>,
-    // (airgroup, air) -> recursive1 batch size; by index, since air names repeat across airgroups.
-    r1_batch_sizes: &std::collections::HashMap<(usize, usize), usize>,
+    // What the recursive setup learned per (airgroup, air): batch sizes and groups, by index since
+    // air names repeat across airgroups. Default before (or without) the recursive setup.
+    recursion: &crate::commands::recursive_setup::RecursiveSetupSummary,
 ) -> serde_json::Value {
     let mut airs = Vec::new();
     let mut air_groups = Vec::new();
@@ -53,8 +54,11 @@ pub(crate) fn build_global_info_json(
             if has_compressor {
                 entry.as_object_mut().unwrap().insert("hasCompressor".to_string(), json!(true));
             }
-            if let Some(&k) = r1_batch_sizes.get(&(ag_idx, air_idx)).filter(|&&k| k > 1) {
+            if let Some(&k) = recursion.r1_batch_sizes.get(&(ag_idx, air_idx)).filter(|&&k| k > 1) {
                 entry.as_object_mut().unwrap().insert("r1BatchSize".to_string(), json!(k));
+            }
+            if let Some(members) = recursion.r1_groups.get(&(ag_idx, air_idx)) {
+                entry.as_object_mut().unwrap().insert("r1Group".to_string(), json!(members));
             }
             air_list.push(entry);
         }
@@ -107,8 +111,7 @@ pub(crate) fn write_global_info_json(
     agg_arity: usize,
     has_compressed_final: bool,
     setup_version: Option<&str>,
-    // (airgroup, air) -> recursive1 batch size; by index, since air names repeat across airgroups.
-    r1_batch_sizes: &std::collections::HashMap<(usize, usize), usize>,
+    recursion: &crate::commands::recursive_setup::RecursiveSetupSummary,
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
@@ -120,7 +123,7 @@ pub(crate) fn write_global_info_json(
         agg_arity,
         has_compressed_final,
         setup_version,
-        r1_batch_sizes,
+        recursion,
     );
     let global_info_str = crate::output::json::to_json_string(&global_info)?;
     fs::write(proving_key_dir.join("pilout.globalInfo.json"), &global_info_str)?;
@@ -279,11 +282,11 @@ mod r1_batch_size_tests {
     /// Only batched airs get the field; its absence reads as 1.
     #[test]
     fn only_a_batched_air_gets_the_field() {
-        let mut sizes = std::collections::HashMap::new();
-        sizes.insert((0usize, 1usize), 5usize);
-        sizes.insert((0usize, 0usize), 1usize);
+        let mut summary = crate::commands::recursive_setup::RecursiveSetupSummary::default();
+        summary.r1_batch_sizes.insert((0usize, 1usize), 5usize);
+        summary.r1_batch_sizes.insert((0usize, 0usize), 1usize);
         let v =
-            build_global_info_json(&pilout(), "t", &StarkStructsConfig::default(), "blake3", 2, false, None, &sizes);
+            build_global_info_json(&pilout(), "t", &StarkStructsConfig::default(), "blake3", 2, false, None, &summary);
         let a = airs(&v);
         assert_eq!(a[0]["name"], "big");
         assert!(a[0].get("r1BatchSize").is_none(), "k=1 must not be written");

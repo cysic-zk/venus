@@ -36,6 +36,10 @@ pub struct StarkSettings {
     pub folding_factors: Option<Vec<usize>>,
     #[serde(default)]
     pub has_compressor: Option<bool>,
+    /// Name of the recursive1 group this air belongs to: the airs of an airgroup sharing a name share
+    /// one recursive1 circuit, one slot each (see `proving_key::recursive::GroupMember`).
+    #[serde(default)]
+    pub recursive1_group: Option<String>,
 }
 
 /// The low-degree test used to check the batched DEEP polynomial `f₀`.

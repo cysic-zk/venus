@@ -29,8 +29,9 @@ struct ChainRound {
 
 /// Port of `calculate_hashes.circom.ejs`.
 ///
-/// Returns the complete `template CalculateStage1Hash(circuitType) { ... }` block as a string.
-pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
+/// Returns the complete `template CalculateStage1Hash<sfx>(circuitType) { ... }` block as a string;
+/// `sfx` tells apart the templates of a recursive1 group's members (see `group_slot_suffix`).
+pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value, sfx: &str) -> String {
     let arity = stark_info["starkStruct"]["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
     let curve = vadcop_info["curve"].as_str().unwrap_or("None");
     let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
@@ -134,6 +135,7 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
 
     // ── Build Tera context ───────────────────────────────────────────────────
     let mut ctx = TeraCtx::new();
+    ctx.insert("sfx", sfx);
     ctx.insert("has_stage1_air_values", &has_stage1_air_values);
     ctx.insert("air_values_len", &air_values_len);
     ctx.insert("is_ec", &is_ec);
@@ -182,7 +184,7 @@ mod tests {
             "latticeSize": 32,
             "hash": "Poseidon2",
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop, "");
 
         assert!(out.contains("template CalculateStage1Hash(circuitType)"));
         assert!(out.contains("signal output values[32]"));
@@ -206,7 +208,7 @@ mod tests {
             "latticeSize": 32,
             "hash": "Poseidon1",
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop, "");
 
         // Poseidon1 family emits the bare `Poseidon(nOuts)` template.
         assert!(out.contains("Poseidon(16)("), "out:\n{out}");
@@ -228,7 +230,7 @@ mod tests {
             "curve": "None",
             "latticeSize": 32,
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop, "");
 
         assert!(out.contains("signal input airValues[4][3]"));
         // Drains: indices 1 and 3 (stage != 1) get drain lines; 0 and 2 do not.
@@ -255,7 +257,7 @@ mod tests {
         const LATTICE: usize = 368;
         let stark = stark_info(2, json!([]));
         let vadcop = json!({ "curve": "None", "latticeSize": LATTICE, "hash": "blake3" });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop, "");
 
         // One Blake3Permute8 per round, and the prover runs contributions_size / w - 1.
         let rounds = out.matches("Blake3Permute8()(").count();
@@ -275,7 +277,7 @@ mod tests {
     fn lattice_not_a_multiple_of_the_round_width_is_rejected() {
         let stark = stark_info(2, json!([]));
         let vadcop = json!({ "curve": "None", "latticeSize": 12, "hash": "blake3" });
-        let _ = gen_calculate_hashes(&stark, &vadcop);
+        let _ = gen_calculate_hashes(&stark, &vadcop, "");
     }
 
     #[test]
@@ -292,7 +294,7 @@ mod tests {
                 "C2": "21, 22, 23, 24, 25"
             }
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop, "");
 
         assert!(out.contains("signal output P[2][5];"));
         assert!(out.contains("signal x[5] <== ["));

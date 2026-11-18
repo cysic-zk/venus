@@ -3830,8 +3830,9 @@ where
             })
             .collect();
         // The tree counts recursive1 circuits, not instances.
-        let n_airgroup_proofs = crate::recursive1_counts_per_airgroup(&expected_rec1, &batch_sizes);
-        let rec1_batcher = Arc::new(crate::Recursive1Batcher::<F>::new(expected_rec1));
+        let r1_groups = crate::recursive1_groups(&self.pctx.global_info);
+        let n_airgroup_proofs = crate::recursive1_counts_per_airgroup(&expected_rec1, &batch_sizes, &r1_groups);
+        let rec1_batcher = Arc::new(crate::Recursive1Batcher::<F>::new(expected_rec1, &r1_groups));
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
@@ -3989,7 +3990,7 @@ where
             let phase_a_remaining_clone = phase_a_remaining.clone();
             let handle_recursive = std::thread::spawn(move || {
                 // Exits when the owner is dropped and the channel disconnects (no sentinel).
-                while let Ok(msg) = recursive_rx_clone.recv() {
+                'recv: while let Ok(msg) = recursive_rx_clone.recv() {
                     let id = msg.id;
                     let p: ProofType = msg.proof_type.parse().unwrap();
                     // Settles the outstanding unit this message represents, on any exit of this
@@ -4052,7 +4053,7 @@ where
                         ProofType::Recursive2 as usize
                     };
 
-                    let witness = if new_proof_type == ProofType::Recursive2 as usize {
+                    let witnesses: Vec<Proof<F>> = if new_proof_type == ProofType::Recursive2 as usize {
                         let proof = if p == ProofType::Recursive1 {
                             recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
                         } else {
@@ -4082,7 +4083,7 @@ where
                                     &setups_clone,
                                     &chunk.iter().collect::<Vec<_>>(),
                                 ) {
-                                    Ok(witness) => Some(witness),
+                                    Ok(witness) => vec![witness],
                                     Err(e) => {
                                         tracing::info!(
                                             "Error generating recursive2 witness from recursive proofs: {}",
@@ -4093,7 +4094,7 @@ where
                                     }
                                 }
                             }
-                            None => None,
+                            None => Vec::new(),
                         }
                     } else if new_proof_type == ProofType::Compressor as usize {
                         // Compressors are never batched; only the recursive1 above them.
@@ -4104,7 +4105,7 @@ where
                             &setups_clone,
                             &proof,
                         ) {
-                            Ok(witness) => Some(witness),
+                            Ok(witness) => vec![witness],
                             Err(e) => {
                                 tracing::info!("Error generating compressor witness: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
@@ -4120,11 +4121,12 @@ where
                         };
                         match rec1_batcher_clone.offer(
                             &pctx_clone,
+                            &sctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
                             proof,
                         ) {
-                            Ok(witness) => witness,
+                            Ok(witnesses) => witnesses,
                             Err(e) => {
                                 tracing::info!("Error generating recursive1 witness: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
@@ -4133,7 +4135,7 @@ where
                         }
                     };
 
-                    if let Some(mut witness) = witness {
+                    for mut witness in witnesses {
                         // Arm by the `(id, kind)` the completion will report. A recursive2 proof gets
                         // its ongoing slot assigned here, before hand-off, so it is armed before it is
                         // in flight; compressor/recursive1 reuse the parent's slot from `global_idx`.
@@ -4177,7 +4179,7 @@ where
                                     cancellation_info_clone
                                         .write_recover()
                                         .cancel(Some(ProofmanError::ProofmanError("witness channel closed".into())));
-                                    break;
+                                    break 'recv;
                                 }
                             }
                         }

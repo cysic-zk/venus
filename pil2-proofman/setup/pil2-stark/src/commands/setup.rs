@@ -413,9 +413,9 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
-            &summary.r1_batch_sizes,
+            &summary,
         )?;
-        tracing::info!("Wrote globalInfo.json with hasCompressor flags and recursive1 batch sizes");
+        tracing::info!("Wrote globalInfo.json with hasCompressor flags and recursive1 batch sizes and groups");
     }
 
     if opts.gen_exps {

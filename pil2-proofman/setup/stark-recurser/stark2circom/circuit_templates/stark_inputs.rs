@@ -48,6 +48,9 @@ pub struct StarkInputOptions {
     /// `{prefix_}publics`: every proof a recursive1 folds is of the same air and run, while a
     /// template verifying unrelated proofs (the ZisK recurser) gives each one its own.
     pub shared_publics: bool,
+    /// Template suffix of the verifier the component instantiates (`StarkVerifier<suffix>`);
+    /// `None` takes the airgroup id. Matches `StarkVerifierOptions::template_suffix`.
+    pub verifier_suffix: Option<String>,
 }
 
 /// Generate the signal declarations for a StarkVerifier proof input block.
@@ -324,7 +327,8 @@ pub fn assign_stark_inputs(
     let map_sections = &stark_info["mapSectionsN"];
 
     // Component declaration
-    let comp_type = match (airgroup_id, opts.is_final) {
+    let suffix = opts.verifier_suffix.clone().or_else(|| airgroup_id.map(|id| id.to_string()));
+    let comp_type = match (suffix, opts.is_final) {
         (Some(id), false) => {
             if opts.parallel {
                 format!("parallel StarkVerifier{id}()")
@@ -525,7 +529,7 @@ mod tests {
         let out = define_stark_inputs(
             &si,
             "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
+            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false, verifier_suffix: None },
         );
         assert!(out.contains("signal input s0_siblingsC[4][3][4];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levelsC[16];"), "out:\n{out}");
@@ -539,7 +543,7 @@ mod tests {
         let out = define_stark_inputs(
             &si,
             "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
+            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false, verifier_suffix: None },
         );
         assert!(out.contains("signal input s0_siblingsC[4][5][4];"), "out:\n{out}");
         assert!(!out.contains("last_levels"), "out:\n{out}");
@@ -552,7 +556,7 @@ mod tests {
             "sV",
             "",
             &si,
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
+            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false, verifier_suffix: None },
             &EnableInput::None,
         );
         assert!(out.contains("sV.s0_last_levelsC <== s0_last_levelsC;"), "out:\n{out}");

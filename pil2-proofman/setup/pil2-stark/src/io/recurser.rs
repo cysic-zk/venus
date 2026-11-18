@@ -22,6 +22,8 @@ pub struct Pil2CircomOptions {
     pub enable_input: bool,
     pub input_challenges: bool,
     pub hash: String,
+    /// See `StarkVerifierOptions::template_suffix`.
+    pub template_suffix: Option<String>,
 }
 
 impl Default for Pil2CircomOptions {
@@ -32,6 +34,7 @@ impl Default for Pil2CircomOptions {
             enable_input: false,
             input_challenges: false,
             hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+            template_suffix: None,
         }
     }
 }
@@ -50,6 +53,7 @@ pub fn pil2circom(
         input_challenges: opts.input_challenges,
         fri_queries_batch_size: None,
         hash: opts.hash.clone(),
+        template_suffix: opts.template_suffix.clone(),
     };
     let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
     gen_stark_verifier(root, stark_info, verifier_info, &rust_opts).context("gen_stark_verifier failed")
@@ -70,6 +74,7 @@ pub fn pil2circom_bn128_blake3(
         input_challenges: opts.input_challenges,
         fri_queries_batch_size: None,
         hash: opts.hash.clone(),
+        template_suffix: opts.template_suffix.clone(),
     };
     let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
     gen_stark_verifier_bn128_blake3(root, stark_info, verifier_info, &rust_opts)

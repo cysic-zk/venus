@@ -10,5 +10,45 @@
   },
   "Sha256f": {
     "initialBlowupFactor": 2
+  },
+  "Rom": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "rom"
+  },
+  "RomData": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "rom"
+  },
+  "InputData": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "input"
+  },
+  "JumpDest": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "input"
+  },
+  "DmaSmall": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "dma"
+  },
+  "DmaPrePostSmall": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "dma"
+  },
+  "ArithSmall": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "arith"
+  },
+  "Add256Small": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "arith"
+  },
+  "BinaryExtensionSmall": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "bext"
+  },
+  "DmaUnaligned": {
+    "initialBlowupFactor": 2,
+    "recursive1Group": "bext"
   }
 }

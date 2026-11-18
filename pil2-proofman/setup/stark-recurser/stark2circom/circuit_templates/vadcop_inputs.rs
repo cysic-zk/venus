@@ -212,6 +212,34 @@ pub fn air_id_vars(stark_info: &Value) -> String {
     )
 }
 
+/// Suffix naming a recursive1 group member's `circuitType` variable and `CalculateStage1Hash`
+/// template; the single-air circuits use none.
+pub fn group_slot_suffix(air_id: u64) -> String {
+    format!("_{air_id}")
+}
+
+/// A recursive1 group's air vars: `circuitType` is the first member's (the circuit's own type, the one
+/// recursive2 selects the group circuit by), and each member's type under `group_slot_suffix`.
+pub fn group_air_id_vars(stark_infos: &[Value]) -> String {
+    let ids = |si: &Value| {
+        (si["airgroupId"].as_u64().expect("starkInfo.airgroupId"), si["airId"].as_u64().expect("starkInfo.airId"))
+    };
+    let (airgroup_id, first) = ids(&stark_infos[0]);
+    let mut out = format!(
+        "    var airgroupId = {airgroup_id};\n    var airId = {first};\n    var circuitType = circuitTypeOf(airgroupId, airId + 1);\n"
+    );
+    for si in stark_infos {
+        let (ag, air) = ids(si);
+        assert_eq!(ag, airgroup_id, "a recursive1 group spans airgroups {airgroup_id} and {ag}");
+        let circuit_type = proofman_common::circuit_type_of(ag, air + 1);
+        if let Some(recorded) = si["circuitType"].as_u64() {
+            assert_eq!(recorded, circuit_type, "starkInfo.circuitType disagrees with ({ag}, {air})");
+        }
+        out.push_str(&format!("    var circuitType{} = circuitTypeOf(airgroupId, {air} + 1);\n", group_slot_suffix(air)));
+    }
+    out
+}
+
 /// `aggregationTypes` from slot 0, every slot required to agree; slot 0 is never empty (batches fill from it).
 pub fn agg_types_consistency(
     vadcop_info: &Value,
@@ -262,6 +290,8 @@ pub fn init_vadcop_inputs(
     vadcop_info: &Value,
     // Binary signal that is 1 when this slot carries no proof; None for a slot always full.
     is_null: Option<&str>,
+    // `group_slot_suffix` of the slot's air in a recursive1 group, "" otherwise.
+    sfx: &str,
 ) -> String {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
@@ -285,9 +315,9 @@ pub fn init_vadcop_inputs(
 
     // The verifier's compile-time rootC fixes the air, so an empty slot may report 0.
     match is_null {
-        None => out.push_str(&format!("    {prefix_}circuitType <== circuitType;\n")),
+        None => out.push_str(&format!("    {prefix_}circuitType <== circuitType{sfx};\n")),
         Some(n) => out.push_str(&format!(
-            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * circuitType;\n"
+            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * circuitType{sfx};\n"
         )),
     }
     // Stays 1 for an empty slot too: AggregateProofsNull multiplies it out.
@@ -313,11 +343,11 @@ pub fn init_vadcop_inputs(
     let air_values_map_len = stark_info["airValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
     if air_values_stage1_len > 0 && air_values_map_len > 0 {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash{sfx}(circuitType{sfx})({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
         ));
     } else {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash{sfx}(circuitType{sfx})({component_name}.rootC, {prefix_stark_}root1);\n"
         ));
     }
 

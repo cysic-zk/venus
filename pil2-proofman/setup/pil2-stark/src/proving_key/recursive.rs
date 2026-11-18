@@ -225,6 +225,16 @@ impl RecursiveTemplate {
     }
 }
 
+/// One member of a recursive1 group (`recursive1Group` in starkstructs): what its slot's verifier is
+/// generated from.
+pub struct GroupMember<'a> {
+    pub air_id: usize,
+    pub air_name: &'a str,
+    pub const_root: &'a [String; 4],
+    pub stark_info: &'a Value,
+    pub verifier_info: &'a Value,
+}
+
 /// Configuration for the recursive setup.
 pub struct RecursiveSetupConfig<'a> {
     pub build_dir: &'a str,
@@ -248,6 +258,9 @@ pub struct RecursiveSetupConfig<'a> {
     pub agg_arity: usize,
     /// Pin this air to 2^N rows (see the --recursive-n-bits flag).
     pub recursive_n_bits: Option<usize>,
+    /// A recursive1 group's members, this config's air first; empty for every other circuit. The
+    /// group circuit verifies one proof of each member, and every member's recursive1 is it.
+    pub group: &'a [GroupMember<'a>],
 
     /// Optional pre-computed pil_info result to reuse instead of running starkSetup again.
     /// When provided, the pil_info computation (starkInfo / verifierInfo / expressionsInfo)
@@ -385,11 +398,39 @@ pub fn gen_recursive_setup(
             enable_input: enable_input || batch_size > 1,
             input_challenges,
             hash: config.hash.to_string(),
+            template_suffix: None,
         };
-        let verifier_circom =
-            crate::io::recurser::pil2circom(&const_root_circuit, effective_si, config.verifier_info, &pil2circom_opts)
-                .context("pil2circom failed in recursive setup")?;
-        fs::write(&verifier_path, &verifier_circom)?;
+        // A group's slots are different airs: one verifier each, under its own template suffix.
+        let mut group_stark_infos: Vec<Value> = Vec::new();
+        let mut verifier_filenames = verifier_filenames.clone();
+        if config.group.is_empty() {
+            let verifier_circom = crate::io::recurser::pil2circom(
+                &const_root_circuit,
+                effective_si,
+                config.verifier_info,
+                &pil2circom_opts,
+            )
+            .context("pil2circom failed in recursive setup")?;
+            fs::write(&verifier_path, &verifier_circom)?;
+        } else {
+            verifier_filenames.clear();
+            for m in config.group {
+                let opts = crate::io::recurser::Pil2CircomOptions {
+                    enable_input: true,
+                    template_suffix: Some(pil2_stark_recurser::stark2circom::circuit_templates::group_verifier_suffix(
+                        config.airgroup_id,
+                        m.air_id,
+                    )),
+                    ..pil2circom_opts.clone()
+                };
+                let verifier_circom = crate::io::recurser::pil2circom(m.const_root, m.stark_info, m.verifier_info, &opts)
+                    .with_context(|| format!("pil2circom failed for group member '{}'", m.air_name))?;
+                let name = format!("{}.group.verifier.circom", m.air_name);
+                fs::write(circom_dir.join(&name), &verifier_circom)?;
+                verifier_filenames.push(name);
+                group_stark_infos.push(m.stark_info.clone());
+            }
+        }
 
         // Generate recursive circom via gen_circom
         let gen_opts = crate::io::recurser::GenCircomOptions {
@@ -402,7 +443,7 @@ pub fn gen_recursive_setup(
         };
         let gen_input = crate::io::recurser::GenCircomInput {
             template_name: template.ejs_template(),
-            stark_infos: std::slice::from_ref(effective_si),
+            stark_infos: if config.group.is_empty() { std::slice::from_ref(effective_si) } else { &group_stark_infos },
             vadcop_info: config.global_info,
             verifier_filenames: &verifier_filenames,
             basic_verification_keys: config.verification_keys,
@@ -453,9 +494,40 @@ pub fn gen_recursive_setup(
 
     // Budgets are affine in k, so the largest k that fits also fills the domain.
     let lanes = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
-    let fit = (template != RecursiveTemplate::Compressor)
+    let fit = (template != RecursiveTemplate::Compressor && config.group.is_empty())
         .then(|| recursion_batch_fit(config.hash, domain_bits, lanes, config.stark_info))
         .flatten();
+    // A group verifies one proof of each member: together they must fit the aggregator.
+    if !config.group.is_empty() {
+        let mut total = 0u64;
+        let mut capacity = 0u64;
+        let mut shares = Vec::new();
+        for m in config.group {
+            let f = recursion_batch_fit(config.hash, domain_bits, lanes, m.stark_info)
+                .with_context(|| format!("recursive1 groups need a {} verifier fit (member '{}')", config.hash, m.air_name))?;
+            total += f.per_proof;
+            capacity = f.capacity;
+            shares.push(format!("{} {:.1}%", m.air_name, 100.0 * f.per_proof as f64 / f.capacity as f64));
+        }
+        tracing::info!(
+            "Group fit (recursive1): {} -> {} of the {} compressions a 2^{} aggregator hosts ({:.1}%)",
+            shares.join(" + "),
+            total,
+            capacity,
+            domain_bits,
+            100.0 * total as f64 / capacity as f64
+        );
+        if total > capacity {
+            bail!(
+                "recursive1 group of '{}' needs {} compressions, past the {} of a 2^{} aggregator: drop a member \
+                 or raise the members' blowup (initialBlowupFactor)",
+                config.air_name,
+                total,
+                capacity,
+                domain_bits
+            );
+        }
+    }
     // Logged before compiling, so a run that bails still shows it.
     if let Some(fit) = fit {
         let head = format!(
@@ -501,7 +573,7 @@ pub fn gen_recursive_setup(
             }
         }
     }
-    let mut batch = if template == RecursiveTemplate::Recursive1 {
+    let mut batch = if template == RecursiveTemplate::Recursive1 && config.group.is_empty() {
         fit.map_or(1, |f| f.k).min(pil2_stark_recurser::stark2circom::circuit_templates::MAX_RECURSIVE1_BATCH)
     } else {
         1
@@ -528,6 +600,17 @@ pub fn gen_recursive_setup(
     };
     if batch > 1 {
         tracing::info!("Recursive1 for air '{}' verifies {} proofs per circuit", config.air_name, batch);
+    }
+
+    // A group past the domain is a configuration error, not a compressor case.
+    if !config.group.is_empty() && plonk_result.n_bits_natural > domain_bits {
+        bail!(
+            "recursive1 group of '{}' packs to 2^{} rows, past the 2^{} recursion domain (the gates outside the \
+             blake3 bands bind): drop a member",
+            config.air_name,
+            plonk_result.n_bits_natural,
+            domain_bits
+        );
     }
 
     // Too big even alone: ask for a compressor, before the floor check makes it fatal.

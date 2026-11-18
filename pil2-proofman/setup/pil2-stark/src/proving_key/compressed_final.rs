@@ -77,6 +77,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             enable_input: false,
             input_challenges: false,
             fri_queries_batch_size: None,
+            template_suffix: None,
         };
         let circom_src =
             gen_stark_verifier(Some(config.const_root), config.stark_info, config.verifier_info, &rust_opts)

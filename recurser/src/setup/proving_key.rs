@@ -81,6 +81,7 @@ pub fn gen_recurser_setup(
             input_challenges: false,
             fri_queries_batch_size: None,
             hash: config.hash.to_string(),
+            template_suffix: None,
         };
         let circom_src = gen_stark_verifier(
             Some(config.zisk_vk),
@@ -105,6 +106,7 @@ pub fn gen_recurser_setup(
         is_final: false,
         parallel: false,
         shared_publics: false,
+        verifier_suffix: None,
     };
     let define_a = define_stark_inputs(config.stark_info, "a_sv", &io_opts);
     let define_b = define_stark_inputs(config.stark_info, "b_sv", &io_opts);

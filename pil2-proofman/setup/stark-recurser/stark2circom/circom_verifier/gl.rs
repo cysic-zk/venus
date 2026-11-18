@@ -30,6 +30,9 @@ pub struct Pil2CircomOptions {
     pub input_challenges: bool,
     pub fri_queries_batch_size: Option<usize>,
     pub hash: String,
+    /// Suffix of every template name the verifier defines; `None` takes the airgroup id. Two
+    /// verifiers in one circuit (a recursive1 group) need two suffixes.
+    pub template_suffix: Option<String>,
 }
 
 impl Default for Pil2CircomOptions {
@@ -41,6 +44,7 @@ impl Default for Pil2CircomOptions {
             input_challenges: false,
             fri_queries_batch_size: None,
             hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+            template_suffix: None,
         }
     }
 }
@@ -165,9 +169,10 @@ fn build_tera_context(
     let sec_len = |key: &str| -> u64 { map_sections_n[key].as_u64().unwrap_or(0) };
 
     // ── Template name suffix ──────────────────────────────────────────────────
-    let id_suffix = match si.get("airgroupId").and_then(|v| v.as_u64()) {
-        Some(aid) => aid.to_string(),
-        None => String::new(),
+    let id_suffix = match (&opts.template_suffix, si.get("airgroupId").and_then(|v| v.as_u64())) {
+        (Some(suffix), _) => suffix.clone(),
+        (None, Some(aid)) => aid.to_string(),
+        (None, None) => String::new(),
     };
     let mk = |base: &str| -> String {
         if id_suffix.is_empty() {

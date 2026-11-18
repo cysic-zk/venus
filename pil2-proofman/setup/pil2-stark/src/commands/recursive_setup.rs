@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use pil2_pilout::pilout as pb;
 
-use crate::proving_key::recursive::{RecursiveSetupConfig, RecursiveTemplate};
+use crate::proving_key::recursive::{GroupMember, RecursiveSetupConfig, RecursiveTemplate};
 use crate::commands::setup::SetupOptions;
 use crate::types::stark_struct::StarkStructsConfig;
 use crate::output::witness_gen::WitnessTracker;
@@ -20,6 +20,8 @@ pub(crate) struct RecursiveSetupSummary {
     pub airs_with_compressor: std::collections::HashSet<String>,
     /// (airgroup, air) -> proofs its recursive1 verifies; absent means 1.
     pub r1_batch_sizes: std::collections::HashMap<(usize, usize), usize>,
+    /// (airgroup, air) -> the air ids of its recursive1 group, in slot order; absent means ungrouped.
+    pub r1_groups: std::collections::HashMap<(usize, usize), Vec<usize>>,
 }
 
 /// Run the recursive setup pipeline after non-recursive AIR setup.
@@ -120,6 +122,10 @@ pub(crate) fn run_recursive_setup(
 
     // Proofs each air's recursive1 verifies, keyed by index: two airgroups may share a name.
     let mut r1_batch_sizes: std::collections::HashMap<(usize, usize), usize> = Default::default();
+    // recursive1 groups: (airgroup, air) -> member air ids, and each group's recursive1 dirs (the
+    // leader's first), filled once the witness libraries are built.
+    let mut r1_groups: std::collections::HashMap<(usize, usize), Vec<usize>> = Default::default();
+    let mut group_dirs: Vec<Vec<PathBuf>> = Vec::new();
 
     for (ag_idx, airgroup) in pilout.air_groups.iter().enumerate() {
         let airgroup_name = airgroup.name.clone().unwrap_or_else(|| format!("airgroup_{}", ag_idx));
@@ -187,6 +193,58 @@ pub(crate) fn run_recursive_setup(
             continue;
         }
 
+        // recursive1 groups: members in air order; the first builds the circuit every member uses.
+        let mut groups: indexmap::IndexMap<String, Vec<usize>> = indexmap::IndexMap::new();
+        for (i, item) in air_items.iter().enumerate() {
+            if let Some(g) = settings_map.resolve(&airgroup_name, &item.air_name).recursive1_group {
+                groups.entry(g).or_default().push(i);
+            }
+        }
+        let max_slots = pil2_stark_recurser::stark2circom::circuit_templates::MAX_RECURSIVE1_BATCH;
+        for (g, members) in &groups {
+            let names: Vec<&str> = members.iter().map(|&i| air_items[i].air_name.as_str()).collect();
+            if members.len() < 2 || members.len() > max_slots {
+                anyhow::bail!("recursive1 group '{g}' has {} members {names:?}; a group has 2 to {max_slots}", members.len());
+            }
+            if members[0] == 0 {
+                anyhow::bail!(
+                    "recursive1 group '{g}': '{}' is the airgroup's first air, whose recursive1 runs first and \
+                     alone to fix the shared recursion setup; leave it out of the group",
+                    names[0]
+                );
+            }
+            if let Some(&i) = members.iter().find(|&&i| air_items[i].has_compressor) {
+                anyhow::bail!("recursive1 group '{g}': '{}' has a compressor, so it verifies another shape", air_items[i].air_name);
+            }
+            let ids: Vec<usize> = members.iter().map(|&i| air_items[i].air_idx).collect();
+            tracing::info!("recursive1 group '{g}': {names:?} share one circuit");
+            for &air in &ids {
+                r1_groups.insert((ag_idx, air), ids.clone());
+            }
+        }
+        // item index -> its group's member indices, for the leader only; other members are skipped.
+        let leads: std::collections::HashMap<usize, Vec<usize>> =
+            groups.values().map(|members| (members[0], members.clone())).collect();
+        let follower: std::collections::HashMap<usize, usize> =
+            groups.values().flat_map(|m| m[1..].iter().map(move |&i| (i, m[0]))).collect();
+        let members_of = |lead: usize| -> Vec<GroupMember<'_>> {
+            leads.get(&lead).map_or_else(Vec::new, |members| {
+                members
+                    .iter()
+                    .map(|&i| {
+                        let it = &air_items[i];
+                        GroupMember {
+                            air_id: it.air_idx,
+                            air_name: &it.air_name,
+                            const_root: &it.const_root_strings,
+                            stark_info: &it.stark_info,
+                            verifier_info: &it.verifier_info,
+                        }
+                    })
+                    .collect()
+            })
+        };
+
         // Helper closure: runs compressor (if needed) then recursive1 for one air.
         // Returns (air_idx, vk_strings, Option<existing_pil_info>, has_compressor, r1_n_bits, batch).
         // existing_pil_info is Some only when the input `existing` was None (first air).
@@ -195,7 +253,8 @@ pub(crate) fn run_recursive_setup(
         // recursive2's n_bits to catch starkStruct mismatches.
         #[allow(clippy::type_complexity)]
         let run_one_air = |item: &AirItem,
-                           existing: Option<(serde_json::Value, serde_json::Value, serde_json::Value)>|
+                           existing: Option<(serde_json::Value, serde_json::Value, serde_json::Value)>,
+                           group: &[GroupMember<'_>]|
          -> Result<(
             usize,
             Vec<String>,
@@ -236,6 +295,7 @@ pub(crate) fn run_recursive_setup(
                             verifier_info: &item.verifier_info,
                             has_compressor: false,
                             existing_pil_info: None,
+                            group: &[],
                             circom_exec: &circom_exec,
                             circuits_gl_path: &circuits_gl_path,
                             recurser_circuits_path: &recurser_circuits_path,
@@ -282,6 +342,7 @@ pub(crate) fn run_recursive_setup(
                         verifier_info: r1_vi,
                         has_compressor,
                         existing_pil_info: existing.clone(),
+                        group,
                         circom_exec: &circom_exec,
                         circuits_gl_path: &circuits_gl_path,
                         recurser_circuits_path: &recurser_circuits_path,
@@ -350,7 +411,7 @@ pub(crate) fn run_recursive_setup(
         // on stderr, so a run redirected with `> log` recorded 42 airs succeeding and simply no line
         // at all for the one that failed -- the air looked skipped rather than broken.
         let (_, first_vk, first_pil_info, first_hc, first_air_r1_n_bits, first_batch) =
-            run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone()).inspect_err(|e| {
+            run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone(), &[]).inspect_err(|e| {
                 tracing::error!("Recursive setup FAILED for air '{}': {e:#}", air_items[0].air_name)
             })?;
         if first_hc {
@@ -382,11 +443,14 @@ pub(crate) fn run_recursive_setup(
             #[allow(clippy::type_complexity)]
             let parallel_results: Vec<Result<(usize, String, Vec<String>, bool, usize)>> = pool.install(|| {
                 use rayon::prelude::*;
-                air_items[1..]
-                    .par_iter()
-                    .map(|item| {
+                (1..air_items.len())
+                    .into_par_iter()
+                    .filter(|i| !follower.contains_key(i))
+                    .map(|i| {
+                        let item = &air_items[i];
+                        let group = members_of(i);
                         let (air_idx, vk, _, hc, _, batch) =
-                            run_one_air(item, existing_for_rest.clone()).inspect_err(|e| {
+                            run_one_air(item, existing_for_rest.clone(), &group).inspect_err(|e| {
                                 tracing::error!("Recursive setup FAILED for air '{}': {e:#}", item.air_name)
                             })?;
                         Ok((air_idx, item.air_name.clone(), vk, hc, batch))
@@ -396,6 +460,30 @@ pub(crate) fn run_recursive_setup(
 
             let mut indexed: Vec<(usize, String, Vec<String>, bool, usize)> =
                 parallel_results.into_iter().collect::<Result<_>>()?;
+            // A member past the first takes its group's circuit: same verkey, files copied below.
+            for (&i, &lead) in &follower {
+                let lead_air = air_items[lead].air_idx;
+                let vk = indexed.iter().find(|r| r.0 == lead_air).map(|r| r.2.clone()).with_context(|| {
+                    format!("recursive1 group leader '{}' produced no verkey", air_items[lead].air_name)
+                })?;
+                indexed.push((air_items[i].air_idx, air_items[i].air_name.clone(), vk, false, 1));
+            }
+            for members in groups.values() {
+                group_dirs.push(
+                    members
+                        .iter()
+                        .map(|&i| {
+                            PathBuf::from(build_dir)
+                                .join("provingKey")
+                                .join(pilout_name)
+                                .join(&airgroup_name)
+                                .join("airs")
+                                .join(&air_items[i].air_name)
+                                .join("recursive1")
+                        })
+                        .collect(),
+                );
+            }
             indexed.sort_by_key(|(idx, _, _, _, _)| *idx);
             for (air_idx, air_name, vk, hc, batch) in indexed {
                 ag_vkeys.push(vk);
@@ -451,6 +539,7 @@ pub(crate) fn run_recursive_setup(
                 verifier_info: &r2_verifier_info,
                 has_compressor: false,
                 existing_pil_info: None, // recursive2 always computes its own starkSetup
+                group: &[],
                 circom_exec: &circom_exec,
                 circuits_gl_path: &circuits_gl_path,
                 recurser_circuits_path: &recurser_circuits_path,
@@ -545,8 +634,27 @@ pub(crate) fn run_recursive_setup(
     // Wait for all witness library builds
     witness_tracker.await_all()?;
 
+    // Every group member's recursive1 is its leader's circuit: hard links of the leader's files.
+    for dirs in &group_dirs {
+        let (lead, rest) = dirs.split_first().expect("a group has members");
+        for dir in rest {
+            if dir.exists() {
+                fs::remove_dir_all(dir)?;
+            }
+            fs::create_dir_all(dir)?;
+            for entry in fs::read_dir(lead)? {
+                let entry = entry?;
+                if entry.file_type()?.is_file() {
+                    let to = dir.join(entry.file_name());
+                    fs::hard_link(entry.path(), &to).or_else(|_| fs::copy(entry.path(), &to).map(|_| ()))?;
+                }
+            }
+            tracing::info!("recursive1 of {:?} is the group circuit of {:?}", dir, lead);
+        }
+    }
+
     tracing::info!("Recursive setup complete");
-    Ok(RecursiveSetupSummary { airs_with_compressor, r1_batch_sizes })
+    Ok(RecursiveSetupSummary { airs_with_compressor, r1_batch_sizes, r1_groups })
 }
 
 /// Parse a verkey.json file and return exactly 4 u64 limb strings.

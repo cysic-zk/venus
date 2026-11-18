@@ -786,7 +786,10 @@ impl<F: PrimeField64> ProofCtx<F> {
                             w_recursive1,
                             w_recursive2,
                             self.global_info.aggregation_arity,
-                            self.global_info.get_air_r1_batch_size(airgroup_id, air_id),
+                            // A group's circuit, like a batch, verifies one proof per slot.
+                            self.global_info
+                                .get_air_r1_group(airgroup_id, air_id)
+                                .map_or(self.global_info.get_air_r1_batch_size(airgroup_id, air_id), <[usize]>::len),
                         ),
                     );
                 }
