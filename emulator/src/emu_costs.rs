@@ -28,7 +28,7 @@ pub const ROM_INIT_COST: u64 = ROM_READ_COST;
 pub const INPUT_READ_COST: u64 = 29;
 
 pub const ROM_COST: usize = 16 << 22;
-pub const TABLES_COST: usize = (65 + 39) << 21; // VirtualTableZisk1 + VirtualTableZisk0
+pub const TABLES_COST: usize = 94 << 21; // VirtualTableZisk0 (one virtual table: 34 + 54 + 6 columns)
 pub const BASE_COST: usize = ROM_COST + TABLES_COST;
 
 pub const MAIN_COST: u64 = 245_u64.div_ceil(4); // Main (4 lanes)

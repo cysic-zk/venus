@@ -8,10 +8,7 @@
 use proofman_common::{ProofCtx, Setup, SetupCtx};
 use proofman_fields::PrimeField64;
 use zisk_common::{StatsCostPerType, StatsType};
-use zisk_pil::{
-    ZiskPublicValues, MAIN_AIR_IDS, VIRTUAL_TABLE_ZISK_0_AIR_IDS, VIRTUAL_TABLE_ZISK_1_AIR_IDS,
-    ZISK_AIRGROUP_ID,
-};
+use zisk_pil::{ZiskPublicValues, MAIN_AIR_IDS, VIRTUAL_TABLE_ZISK_0_AIR_IDS, ZISK_AIRGROUP_ID};
 
 use crate::error::{ExecutorError, ExecutorResult, RwLockExt};
 use crate::ports::{Dctx, GlobalId, InstanceInfo, ProofRegistry};
@@ -101,10 +98,8 @@ impl<'a, F: PrimeField64> ProofmanAdapter<'a, F> {
             cost_per_type.add_cost(instance.stats_type(), setup_cost(setup));
         }
 
-        for air_id in [VIRTUAL_TABLE_ZISK_0_AIR_IDS[0], VIRTUAL_TABLE_ZISK_1_AIR_IDS[0]] {
-            let setup = self.sctx.get_setup(ZISK_AIRGROUP_ID, air_id)?;
-            cost_per_type.add_cost(StatsType::Tables, setup_cost(setup));
-        }
+        let setup = self.sctx.get_setup(ZISK_AIRGROUP_ID, VIRTUAL_TABLE_ZISK_0_AIR_IDS[0])?;
+        cost_per_type.add_cost(StatsType::Tables, setup_cost(setup));
 
         Ok(cost_per_type)
     }

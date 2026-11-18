@@ -7,5 +7,8 @@
   },
   "KeccakfHalf": {
     "hasCompressor": true
+  },
+  "Sha256f": {
+    "initialBlowupFactor": 2
   }
 }

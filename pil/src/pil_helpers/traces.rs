@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "075e6b01e3b17c064ce84aa3876e54cd16b7b8859b14af45675cb890e5626e77";
+pub const PILOUT_HASH: &str = "5dd9f0e7dc2839ccfbe23742878599a231562bd66939f9f472e633c1fe3d97d2";
 
 //AIRGROUP CONSTANTS
 
@@ -143,8 +143,6 @@ pub const DMA_PRE_POST_SMALL_AIR_IDS: &[usize] = &[57];
 pub const JUMP_DEST_AIR_IDS: &[usize] = &[58];
 
 pub const VIRTUAL_TABLE_ZISK_0_AIR_IDS: &[usize] = &[59];
-
-pub const VIRTUAL_TABLE_ZISK_1_AIR_IDS: &[usize] = &[60];
 
 
 //PUBLICS
@@ -838,26 +836,15 @@ trace_row!(JumpDestTraceRow<F> {
 pub type JumpDestTrace<R> = GenericTrace<R, 2097152, 0, 58>;
 
 trace_row!(VirtualTableZisk0FixedRow<F> {
- COL_0_0_0: F, COL_0_0_1: F, COL_0_0_2: F, COL_0_0_3: F, COL_0_0_5: F, COL_0_0_7: F, COL_1_8_0: F, COL_1_8_1: F, COL_1_8_3: F, COL_1_8_5: F, COL_2_16_1: F, COL_2_16_3: F, COL_2_16_5: F, COL_3_24_1: F, COL_3_24_3: F, COL_3_24_5: F, COL_4_32_1: F, COL_4_32_3: F, COL_4_32_5: F, COL_5_40_1: F, COL_5_40_3: F, COL_5_40_5: F, COL_6_48_1: F, COL_6_48_3: F, COL_6_48_5: F, COL_7_56_1: F, COL_7_56_3: F, COL_7_56_5: F, COL_8_64_0: F, COL_8_64_1: F, COL_8_64_2: F, COL_8_64_3: F, COL_8_64_5: F, COL_8_64_6: F, COL_9_72_0: F, COL_9_72_1: F, COL_9_72_2: F, COL_9_72_3: F, COL_9_72_5: F, COL_9_72_6: F, COL_10_80_0: F, COL_10_80_1: F, COL_10_80_2: F, COL_10_80_3: F, COL_10_80_5: F, COL_10_80_6: F, COL_11_88_0: F, COL_11_88_1: F, COL_11_88_2: F, COL_11_88_3: F, COL_11_88_5: F, COL_11_88_6: F, COL_11_88_7: F, UID_11: F, __L1__: F,
+ __ROW_INDEX__: F, COL_9_9_0: F, COL_14_14_0: F, COL_14_14_1: F, UID_14: F, COL_15_16_0: F, COL_15_16_1: F, COL_15_16_2: F, COL_15_16_3: F, COL_15_16_4: F, UID_15: F, COL_16_21_0: F, COL_16_21_1: F, COL_16_21_2: F, COL_16_21_3: F, COL_16_21_4: F, COL_16_21_5: F, UID_16: F, COL_17_27_0: F, COL_17_27_1: F, COL_17_27_2: F, COL_17_27_3: F, COL_17_27_4: F, COL_17_27_5: F, UID_17: F, COL_18_33_0: F, COL_18_33_1: F, COL_18_33_2: F, COL_18_33_3: F, COL_18_33_4: F, COL_18_33_5: F, COL_18_33_6: F, UID_18: F, COL_19_40_0: F, COL_19_40_1: F, COL_19_40_2: F, COL_19_40_3: F, COL_19_40_4: F, COL_19_40_5: F, COL_19_40_6: F, COL_20_47_0: F, COL_20_47_1: F, COL_20_47_4: F, COL_20_47_5: F, COL_20_47_6: F, COL_21_54_0: F, COL_21_54_1: F, COL_21_54_4: F, COL_21_54_5: F, COL_21_54_6: F, COL_22_61_0: F, COL_22_61_1: F, COL_22_61_2: F, COL_22_61_3: F, COL_22_61_4: F, COL_22_61_5: F, COL_22_61_6: F, COL_22_61_7: F, UID_22: F, COL_23_69_0: F, COL_23_69_1: F, COL_23_69_2: F, COL_23_69_3: F, COL_23_69_5: F, COL_23_69_7: F, COL_24_77_1: F, COL_24_77_3: F, COL_24_77_5: F, COL_25_85_1: F, COL_25_85_3: F, COL_25_85_5: F, COL_26_93_1: F, COL_26_93_3: F, COL_26_93_5: F, COL_27_101_1: F, COL_27_101_3: F, COL_27_101_5: F, COL_28_109_1: F, COL_28_109_3: F, COL_28_109_5: F, COL_29_117_1: F, COL_29_117_3: F, COL_29_117_5: F, COL_30_125_1: F, COL_30_125_3: F, COL_30_125_5: F, COL_31_133_0: F, COL_31_133_1: F, COL_31_133_2: F, COL_31_133_3: F, COL_31_133_5: F, COL_31_133_6: F, COL_32_141_0: F, COL_32_141_1: F, COL_32_141_2: F, COL_32_141_3: F, COL_32_141_5: F, COL_32_141_6: F, COL_33_149_0: F, COL_33_149_1: F, COL_33_149_2: F, COL_33_149_3: F, COL_33_149_5: F, COL_33_149_6: F, COL_33_149_7: F, UID_33: F, __L1__: F,
 });
 pub type VirtualTableZisk0Fixed<F> = GenericTrace<VirtualTableZisk0FixedRow<F>, 2097152, 0, 59>;
 
 trace_row!(VirtualTableZisk0TraceRow<F> {
- multiplicity:[F; 12],
+ multiplicity:[F; 34],
 });
 
 pub type VirtualTableZisk0Trace<F> = GenericTrace<VirtualTableZisk0TraceRow<F>, 2097152, 0, 59>;
-
-trace_row!(VirtualTableZisk1FixedRow<F> {
- __ROW_INDEX__: F, COL_9_9_0: F, COL_14_14_0: F, COL_14_14_1: F, UID_14: F, COL_15_16_0: F, COL_15_16_1: F, COL_15_16_2: F, COL_15_16_3: F, COL_15_16_4: F, UID_15: F, COL_16_21_0: F, COL_16_21_1: F, COL_16_21_2: F, COL_16_21_3: F, COL_16_21_4: F, COL_16_21_5: F, UID_16: F, COL_17_27_0: F, COL_17_27_1: F, COL_17_27_2: F, COL_17_27_3: F, COL_17_27_4: F, COL_17_27_5: F, UID_17: F, COL_18_33_0: F, COL_18_33_1: F, COL_18_33_2: F, COL_18_33_3: F, COL_18_33_4: F, COL_18_33_5: F, COL_18_33_6: F, UID_18: F, COL_19_40_0: F, COL_19_40_1: F, COL_19_40_2: F, COL_19_40_3: F, COL_19_40_4: F, COL_19_40_5: F, COL_19_40_6: F, COL_20_47_0: F, COL_20_47_1: F, COL_20_47_4: F, COL_20_47_5: F, COL_20_47_6: F, COL_21_54_0: F, COL_21_54_1: F, COL_21_54_4: F, COL_21_54_5: F, COL_21_54_6: F, COL_22_61_0: F, COL_22_61_1: F, COL_22_61_2: F, COL_22_61_3: F, COL_22_61_4: F, COL_22_61_5: F, COL_22_61_6: F, UID_22: F, __L1__: F,
-});
-pub type VirtualTableZisk1Fixed<F> = GenericTrace<VirtualTableZisk1FixedRow<F>, 2097152, 0, 60>;
-
-trace_row!(VirtualTableZisk1TraceRow<F> {
- multiplicity:[F; 23],
-});
-
-pub type VirtualTableZisk1Trace<F> = GenericTrace<VirtualTableZisk1TraceRow<F>, 2097152, 0, 60>;
 
 trace_row!(RomRomTraceRow<F> {
  is_data: F, line: F, a_offset_imm0: F, a_imm1: F, b_offset_imm0: F, b_imm1: F, ind_width: F, op: F, store_offset: F, jmp_offset1: F, jmp_offset2: F, flags: F,
@@ -1229,10 +1216,6 @@ values!(VirtualTableZisk0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(VirtualTableZisk1AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
-
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
     (0, 0, PackedInfoConst {
         is_packed: true,
@@ -1589,5 +1572,4 @@ pub const AIR_NAMES: &[(usize, usize, &str)] = &[
     (0, 57, "DmaPrePostSmall"),
     (0, 58, "JumpDest"),
     (0, 59, "VirtualTableZisk0"),
-    (0, 60, "VirtualTableZisk1"),
 ];
