@@ -221,7 +221,9 @@ pub fn gen_recursive_test_setup(
     // Exactly the real recursion layers' settings (low-degree test, blowup, terminal degree,
     // grinding, kept levels), so a test key matches their geometry: left to generic defaults the
     // fixture once verified a FRI shape the pipeline never builds.
-    let mut settings = crate::proving_key::recursive::recursive_stark_settings(template, hash, recursion_settings);
+    let domain_bits = proofman_common::hash_family::recursive_bits_threshold(hash);
+    let mut settings =
+        crate::proving_key::recursive::recursive_stark_settings(template, hash, recursion_settings, domain_bits);
     // finalDegree is the final polynomial's degree bound, so an overridden blowup leaves it alone.
     settings.initial_blowup_factor = Some(blowup);
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);

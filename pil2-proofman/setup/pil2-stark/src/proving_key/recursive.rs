@@ -70,11 +70,18 @@ fn recursion_batch_fit(hash: &str, n_bits: usize, lanes: usize, inner_si: &Value
 /// above it, and recursive1's own llv sizes recursive2.
 ///
 /// The compressor takes 6, one above blake3's 5: each level trades a recursive1 compression per
-/// opening for twice the SelectValue gates.
-pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: &str) -> Option<usize> {
+/// opening for twice the SelectValue gates. The recursion pair keeps the family value at the
+/// family's own aggregator size (2^19 for blake3) and one level more per doubling of it
+/// (`--recursive-n-bits`): a 2^(19+k) aggregator hosts 2^k times the gates, and at 2^20 the level
+/// is what lets four recursive2 verifications fit (4 x 18,827 compressions at 5 is 100.6%).
+pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: &str, domain_bits: usize) -> Option<usize> {
     match template {
         RecursiveTemplate::Compressor if hash == "blake3" => Some(6),
-        _ => proofman_common::hash_family::recursive_last_level_verification(hash),
+        RecursiveTemplate::Compressor => proofman_common::hash_family::recursive_last_level_verification(hash),
+        RecursiveTemplate::Recursive1 | RecursiveTemplate::Recursive2 => {
+            let extra = domain_bits.saturating_sub(proofman_common::hash_family::recursive_bits_threshold(hash));
+            proofman_common::hash_family::recursive_last_level_verification(hash).map(|llv| llv + extra)
+        }
     }
 }
 
@@ -159,6 +166,7 @@ pub fn recursive_stark_settings(
     template: RecursiveTemplate,
     hash: &str,
     user: &crate::types::stark_struct::StarkSettings,
+    domain_bits: usize,
 ) -> crate::types::stark_struct::StarkSettings {
     let low_degree_test = user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Fri);
     let blowup = recursive_blowup(template, hash);
@@ -194,7 +202,7 @@ pub fn recursive_stark_settings(
         // STIR only: a per-round budget overriding the seed (generate_stark_struct rejects it for FRI).
         grinding_bits_queries: user.grinding_bits_queries.clone(),
         folding_factors: user.folding_factors.clone(),
-        last_level_verification: recursive_last_level_verification(template, hash),
+        last_level_verification: recursive_last_level_verification(template, hash, domain_bits),
         ..Default::default()
     }
 }
@@ -792,7 +800,7 @@ pub fn gen_recursive_setup(
 
             // Generate stark struct for this recursive circuit.
             let stark_struct = crate::types::stark_struct::generate_stark_struct(
-                &recursive_stark_settings(template, config.hash, config.recursion_settings),
+                &recursive_stark_settings(template, config.hash, config.recursion_settings, domain_bits),
                 n_bits_air,
                 config.hash,
             );
@@ -1240,14 +1248,16 @@ mod blowup_tests {
     /// The compressor keeps one more Merkle level than the recursion pair, and only the compressor.
     #[test]
     fn only_the_compressor_keeps_the_extra_merkle_level() {
-        assert_eq!(recursive_last_level_verification(RecursiveTemplate::Compressor, "blake3"), Some(6));
-        // The recursion pair keeps the family value; only the compressor departs from it.
+        assert_eq!(recursive_last_level_verification(RecursiveTemplate::Compressor, "blake3", 19), Some(6));
+        assert_eq!(recursive_last_level_verification(RecursiveTemplate::Compressor, "blake3", 20), Some(6));
+        // At the family's aggregator size the recursion pair keeps the family value, one more per doubling.
         for t in [RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
-            assert_eq!(recursive_last_level_verification(t, "blake3"), Some(5), "{t:?} takes the family value");
+            assert_eq!(recursive_last_level_verification(t, "blake3", 19), Some(5), "{t:?} takes the family value");
+            assert_eq!(recursive_last_level_verification(t, "blake3", 20), Some(6), "{t:?} at 2^20");
         }
         for t in [RecursiveTemplate::Compressor, RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
-            assert_eq!(recursive_last_level_verification(t, "Poseidon1"), None, "{t:?}");
-            assert_eq!(recursive_last_level_verification(t, "Poseidon2"), None, "{t:?}");
+            assert_eq!(recursive_last_level_verification(t, "Poseidon1", 17), None, "{t:?}");
+            assert_eq!(recursive_last_level_verification(t, "Poseidon2", 18), None, "{t:?}");
         }
     }
 
@@ -1332,7 +1342,7 @@ mod tests {
             folding_factors: Some(vec![4, 3, 3]),
             ..Default::default()
         };
-        let s = super::recursive_stark_settings(super::RecursiveTemplate::Recursive2, "blake3", &user);
+        let s = super::recursive_stark_settings(super::RecursiveTemplate::Recursive2, "blake3", &user, 19);
         assert_eq!(s.folding_factors, Some(vec![4, 3, 3]));
     }
 }
