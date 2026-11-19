@@ -634,7 +634,9 @@ pub(crate) fn run_recursive_setup(
     // Wait for all witness library builds
     witness_tracker.await_all()?;
 
-    // Every group member's recursive1 is its leader's circuit: hard links of the leader's files.
+    // Every group member's recursive1 is its leader's circuit: copies of the leader's files. Copies, not
+    // hard links: a later setup in the same build dir writes each air's files in place, and a stale link
+    // would write one air's circuit into another's directory.
     for dirs in &group_dirs {
         let (lead, rest) = dirs.split_first().expect("a group has members");
         for dir in rest {
@@ -645,8 +647,7 @@ pub(crate) fn run_recursive_setup(
             for entry in fs::read_dir(lead)? {
                 let entry = entry?;
                 if entry.file_type()?.is_file() {
-                    let to = dir.join(entry.file_name());
-                    fs::hard_link(entry.path(), &to).or_else(|_| fs::copy(entry.path(), &to).map(|_| ()))?;
+                    fs::copy(entry.path(), dir.join(entry.file_name()))?;
                 }
             }
             tracing::info!("recursive1 of {:?} is the group circuit of {:?}", dir, lead);

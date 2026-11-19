@@ -378,6 +378,46 @@ struct GroupSlots<F: PrimeField64> {
     seen: Vec<usize>,
 }
 
+/// The inputs of one recursive1 circuit, held until its witness is generated: the caller generates and
+/// hands off one witness at a time, so a burst of folds never holds more than one pooled trace buffer.
+pub enum Recursive1Inputs<F: PrimeField64> {
+    /// The proof of an air with a recursive1 of its own.
+    Single(Proof<F>),
+    /// Up to `r1BatchSize` proofs of one air.
+    Batch(Vec<Proof<F>>),
+    /// At most one proof per member of a recursive1 group, in slot order.
+    Group { airgroup_id: usize, members: Vec<usize>, slots: Vec<Option<Proof<F>>> },
+}
+
+impl<F: PrimeField64> Recursive1Inputs<F> {
+    pub fn witness(
+        &self,
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+        setups: &SetupsVadcop<F>,
+    ) -> ProofmanResult<Proof<F>> {
+        match self {
+            Self::Single(proof) => gen_witness_recursive(pctx, memory_handler_recursive_witness, setups, proof),
+            Self::Batch(proofs) => gen_witness_recursive_batch(
+                pctx,
+                memory_handler_recursive_witness,
+                setups,
+                &proofs.iter().collect::<Vec<_>>(),
+            ),
+            Self::Group { airgroup_id, members, slots } => gen_witness_recursive_group(
+                pctx,
+                sctx,
+                memory_handler_recursive_witness,
+                setups,
+                *airgroup_id,
+                members,
+                slots,
+            ),
+        }
+    }
+}
+
 /// Collects one air's proofs until its batch is full or its last planned proof arrives, and a recursive1
 /// group's proofs until `group_can_fold`. The plan is exact: tables skip before it is read, and every
 /// planned instance is armed in the proof ledger.
@@ -423,69 +463,44 @@ impl<F: PrimeField64> Recursive1Batcher<F> {
         }
     }
 
-    /// The witnesses this proof completes: none while its batch or group is still filling, possibly
-    /// several when it is a group's last awaited input.
-    pub fn offer(
-        &self,
-        pctx: &ProofCtx<F>,
-        sctx: &SetupCtx<F>,
-        memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
-        setups: &SetupsVadcop<F>,
-        proof: Proof<F>,
-    ) -> ProofmanResult<Vec<Proof<F>>> {
+    /// The recursive1 circuits this proof completes: none while its batch or group is still filling,
+    /// possibly several when it is a group's last awaited input.
+    pub fn offer(&self, pctx: &ProofCtx<F>, proof: Proof<F>) -> Vec<Recursive1Inputs<F>> {
         let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
         if let Some(g) = self.group_of[airgroup_id][air_id] {
             let (ag, group) = &self.groups[g];
+            let mut st = group.lock().unwrap();
+            let m = st.members.iter().position(|&a| a == air_id).expect("the air is in its group");
+            st.waiting[m].push_back(proof);
+            st.seen[m] += 1;
+            let planned: Vec<usize> = st.members.iter().map(|&a| self.planned[*ag][a]).collect();
             let mut folds = Vec::new();
-            let members = {
-                let mut st = group.lock().unwrap();
-                let m = st.members.iter().position(|&a| a == air_id).expect("the air is in its group");
-                st.waiting[m].push_back(proof);
-                st.seen[m] += 1;
-                let planned: Vec<usize> = st.members.iter().map(|&a| self.planned[*ag][a]).collect();
-                loop {
-                    let waiting: Vec<usize> = st.waiting.iter().map(|q| q.len()).collect();
-                    if !group_can_fold(&waiting, &st.seen, &planned) {
-                        break;
-                    }
-                    // Taken under the lock, so two streams cannot fold the same proofs.
-                    folds.push(st.waiting.iter_mut().map(|q| q.pop_front()).collect::<Vec<_>>());
+            loop {
+                let waiting: Vec<usize> = st.waiting.iter().map(|q| q.len()).collect();
+                if !group_can_fold(&waiting, &st.seen, &planned) {
+                    break;
                 }
-                st.members.clone()
-            };
-            return folds
-                .iter()
-                .map(|slots| {
-                    gen_witness_recursive_group(
-                        pctx,
-                        sctx,
-                        memory_handler_recursive_witness,
-                        setups,
-                        *ag,
-                        &members,
-                        slots,
-                    )
-                })
-                .collect();
+                // Taken under the lock, so two streams cannot fold the same proofs.
+                folds.push(Recursive1Inputs::Group {
+                    airgroup_id: *ag,
+                    members: st.members.clone(),
+                    slots: st.waiting.iter_mut().map(|q| q.pop_front()).collect(),
+                });
+            }
+            return folds;
         }
         let k = pctx.global_info.get_air_r1_batch_size(airgroup_id, air_id);
         if k < 2 {
-            return gen_witness_recursive(pctx, memory_handler_recursive_witness, setups, &proof).map(|w| vec![w]);
+            return vec![Recursive1Inputs::Single(proof)];
         }
-
-        let chunk = {
-            let mut slot = self.slots[airgroup_id][air_id].lock().unwrap();
-            slot.push(proof);
-            let seen = self.seen[airgroup_id][air_id].fetch_add(1, Ordering::AcqRel) + 1;
-            if !should_flush(slot.len(), k, seen, self.planned[airgroup_id][air_id]) {
-                return Ok(Vec::new());
-            }
-            // Taken under the lock, so two streams cannot flush the same proofs.
-            std::mem::take(&mut *slot)
-        };
-
-        let refs: Vec<&Proof<F>> = chunk.iter().collect();
-        gen_witness_recursive_batch(pctx, memory_handler_recursive_witness, setups, &refs).map(|w| vec![w])
+        let mut slot = self.slots[airgroup_id][air_id].lock().unwrap();
+        slot.push(proof);
+        let seen = self.seen[airgroup_id][air_id].fetch_add(1, Ordering::AcqRel) + 1;
+        if !should_flush(slot.len(), k, seen, self.planned[airgroup_id][air_id]) {
+            return Vec::new();
+        }
+        // Taken under the lock, so two streams cannot flush the same proofs.
+        vec![Recursive1Inputs::Batch(std::mem::take(&mut *slot))]
     }
 }
 
