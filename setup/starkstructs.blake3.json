@@ -11,14 +11,6 @@
   "Sha256f": {
     "initialBlowupFactor": 2
   },
-  "Rom": {
-    "initialBlowupFactor": 2,
-    "recursive1Group": "rom"
-  },
-  "RomData": {
-    "initialBlowupFactor": 2,
-    "recursive1Group": "rom"
-  },
   "InputData": {
     "initialBlowupFactor": 2,
     "recursive1Group": "input"
