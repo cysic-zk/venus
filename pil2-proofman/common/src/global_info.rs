@@ -359,13 +359,13 @@ mod aggregation_arity_tests {
         let json = serde_json::json!({
             "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
             "aggTypes": [], "nPublics": 0, "numChallenges": [0],
-            "transcriptArity": 16, "aggregationArity": 4
+            "transcriptArity": 16, "aggregationArity": 5
         });
         std::fs::write(dir.join("pilout.globalInfo.json"), serde_json::to_string(&json).unwrap()).unwrap();
 
         let result = GlobalInfo::from_file(&dir.display().to_string());
-        let Err(err) = result else { panic!("arity 4 must be rejected at load") };
-        assert!(err.to_string().contains("aggregationArity 4"), "unexpected error: {err}");
+        let Err(err) = result else { panic!("arity 5 must be rejected at load") };
+        assert!(err.to_string().contains("aggregationArity 5"), "unexpected error: {err}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
