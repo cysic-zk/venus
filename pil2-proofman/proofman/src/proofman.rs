@@ -3182,7 +3182,9 @@ where
                 Ok(h.finalize())
             })
             .collect::<ProofmanResult<_>>()?;
-        let maps: Vec<_> = fitted.iter().filter(|m| !std_owned.contains(&m.table_id)).collect();
+        // A host-fed table is counted from its column, whatever map the fitter found for it.
+        let maps: Vec<_> =
+            fitted.iter().filter(|m| !std_owned.contains(&m.table_id) && !host_fed.contains(&m.table_id)).collect();
         let mut map_ids: Vec<u64> = maps.iter().map(|m| m.table_id).collect();
         map_ids.sort_unstable();
         // A host-fed table no virtual-table air hosts has nowhere to be counted: the std keeps it.
@@ -3237,11 +3239,12 @@ where
         // left to the std. Exact-map bytes are GPU-resident, per device.
         if vt_summary.considered > 0 {
             let n_range_in_scope = vt_summary.unclaimed_ids.iter().filter(|t| range_owned.contains(t)).count();
-            let n_std_left = vt_summary.unclaimed_ids.len() - n_range_in_scope;
+            let n_host_fed = vt_summary.unclaimed_ids.iter().filter(|t| host_fed_ids.contains(t)).count();
+            let n_std_left = vt_summary.unclaimed_ids.len() - n_range_in_scope - n_host_fed;
             tracing::info!(
                 "Virtual tables: {}/{} prover-owned in {} ms -- {n_range_in_scope} range, {} exact map \
-                 ({} MB); {n_std_left} left to the std",
-                fitted.len() + n_range_in_scope,
+                 ({} MB), {n_host_fed} host-fed; {n_std_left} left to the std",
+                fitted.len() + n_range_in_scope + n_host_fed,
                 vt_summary.considered,
                 vt_summary.elapsed_ms,
                 fitted.len(),
