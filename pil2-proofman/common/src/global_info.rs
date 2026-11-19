@@ -13,7 +13,7 @@ fn default_hash_id() -> String {
 }
 
 /// Arities the `recursive2` circuit can be generated for. Larger values are not known to work.
-pub const VALID_AGGREGATION_ARITIES: [usize; 2] = [2, 3];
+pub const VALID_AGGREGATION_ARITIES: [usize; 3] = [2, 3, 4];
 
 pub fn is_valid_aggregation_arity(n: usize) -> bool {
     VALID_AGGREGATION_ARITIES.contains(&n)
@@ -330,10 +330,11 @@ mod aggregation_arity_tests {
     use super::*;
 
     #[test]
-    fn only_two_and_three_are_valid_arities() {
+    fn only_two_to_four_are_valid_arities() {
         assert!(is_valid_aggregation_arity(2));
         assert!(is_valid_aggregation_arity(3));
-        for n in [0usize, 1, 4, 5, 16] {
+        assert!(is_valid_aggregation_arity(4));
+        for n in [0usize, 1, 5, 16] {
             assert!(!is_valid_aggregation_arity(n), "{n} must be rejected");
         }
     }

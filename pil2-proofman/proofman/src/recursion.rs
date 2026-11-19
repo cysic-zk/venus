@@ -1899,44 +1899,51 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     Ok(max_prover_size as usize)
 }
 
-/// Aggregation proofs needed to reduce `n` proofs to one, and whether the last chunk needs a
-/// null proof to fill it.
-///
-/// A short chunk needs `arity - rem` nulls, which is 0 or 1 only while `arity <= 3` — hence the
-/// bool. Raising `VALID_AGGREGATION_ARITIES` past 3 means making this a count and updating the
-/// `push(null_proof)` sites in proofman.rs.
-#[derive(Debug)]
+/// Aggregation proofs needed to reduce `n` proofs to one, and the null proofs that make the count
+/// come out: each aggregation turns `arity` proofs into one, so `n + n_nulls` must be one more
+/// than a multiple of `arity - 1`. The nulls go into the airgroup's pool before any proof does,
+/// whatever order the proofs then arrive in.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Recursive2Proofs {
     pub n_proofs: usize,
-    pub has_remaining: bool,
+    pub n_nulls: usize,
 }
 
-impl Recursive2Proofs {
-    pub fn new(n_proofs: usize, has_remaining: bool) -> Self {
-        Self { n_proofs, has_remaining }
+pub fn total_recursive_proofs(n: usize, arity: usize) -> Recursive2Proofs {
+    if n <= 1 {
+        return Recursive2Proofs { n_proofs: 0, n_nulls: 0 };
     }
+    let step = arity - 1;
+    let n_nulls = (step - (n - 1) % step) % step;
+    Recursive2Proofs { n_proofs: (n + n_nulls - 1) / step, n_nulls }
 }
 
-pub fn total_recursive_proofs(mut n: usize, arity: usize) -> Recursive2Proofs {
-    let mut total = 0;
-    let mut rem = n % arity;
-    while n > 1 {
-        let next = n / arity;
-        rem = n % arity;
-        total += next;
-        if next != 0 {
-            n = next + rem;
-        } else if rem != 1 {
-            n = next;
+#[cfg(test)]
+mod recursive2_count_tests {
+    use super::total_recursive_proofs;
+
+    /// The proofman pool: nulls first, then every proof; whenever it holds `arity`, they fold into one.
+    fn simulate(n: usize, arity: usize, n_nulls: usize) -> (usize, usize) {
+        let (mut pool, mut folds) = (n_nulls, 0);
+        for _ in 0..n {
+            pool += 1;
+            while pool >= arity {
+                pool -= arity - 1;
+                folds += 1;
+            }
         }
+        (folds, pool)
     }
 
-    // A remainder of 2 or more needs one more aggregation, null-padded up to the arity.
-    // At arity 2 the remainder is never >= 2, so this never fires.
-    if rem >= 2 {
-        Recursive2Proofs::new(total + 1, true)
-    } else {
-        Recursive2Proofs::new(total, false)
+    #[test]
+    fn the_promised_count_reduces_the_pool_to_one_proof() {
+        for arity in 2..=4 {
+            for n in 2..64 {
+                let r = total_recursive_proofs(n, arity);
+                assert!(r.n_nulls < arity - 1 || arity == 2 && r.n_nulls == 0, "arity {arity} n {n}: {r:?}");
+                assert_eq!(simulate(n, arity, r.n_nulls), (r.n_proofs, 1), "arity {arity} n {n}: {r:?}");
+            }
+        }
     }
 }
 

@@ -41,7 +41,7 @@ pub struct CircomGenOptions {
 }
 
 /// Most proofs one recursive1 verifies. A deliberate cap, below the 26 the letter-named slots allow.
-pub const MAX_RECURSIVE1_BATCH: usize = 3;
+pub const MAX_RECURSIVE1_BATCH: usize = 5;
 
 /// Template suffix of a recursive1 group member's verifier (`StarkVerifier<suffix>`): the setup
 /// generates the verifier under it and the group circuit instantiates it by it.
