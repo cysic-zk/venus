@@ -4780,9 +4780,23 @@ where
                 if self.pctx.mpi_ctx.rank as usize == outer_rank {
                     self.worker_aggregations_rma(outer_rank != 0)?;
                 } else {
-                    for airgroup in 0..self.pctx.global_info.air_groups.len() {
+                    // Only a rank that owns instances of an airgroup has a proof of it to send: the
+                    // outer rank counts the alive ranks, and an empty airgroup's null is its own.
+                    let instances = self.pctx.dctx_get_instances();
+                    let mut owns = vec![false; self.pctx.global_info.air_groups.len()];
+                    for global_id in self.pctx.dctx_get_worker_instances().iter() {
+                        if let Ok(owner) = self.pctx.dctx_get_process_owner_instance(*global_id) {
+                            if owner as usize == self.pctx.mpi_ctx.rank as usize {
+                                owns[instances[*global_id].airgroup_id] = true;
+                            }
+                        }
+                    }
+                    for (airgroup, &owned) in owns.iter().enumerate() {
                         let mut write_lock = self.recursive2_proofs[airgroup].write().unwrap();
-
+                        if !owned {
+                            write_lock.clear();
+                            continue;
+                        }
                         while let Some(proof) = write_lock.pop() {
                             self.pctx.mpi_ctx.send_proof_agg_rank(&proof);
                         }
@@ -5598,6 +5612,12 @@ where
 
         let mut total_proofs: usize = 0;
         for (airgroup, &n_proofs) in alives.iter().enumerate() {
+            // A rank without instances of the airgroup holds the null that stands for an empty
+            // airgroup. Others' proofs make it a stray input: the pool must hold exactly the alive
+            // ranks' proofs and the nulls their count asks for.
+            if n_proofs > 0 && airgroup_instances_alive[airgroup][my_rank] == 0 {
+                self.recursive2_proofs[airgroup].write().unwrap().clear();
+            }
             let n_recursive2_proofs = total_recursive_proofs(n_proofs, self.pctx.global_info.aggregation_arity);
             if n_recursive2_proofs.n_nulls > 0 {
                 let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
