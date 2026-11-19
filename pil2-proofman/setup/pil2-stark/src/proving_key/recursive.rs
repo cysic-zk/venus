@@ -368,8 +368,9 @@ pub fn gen_recursive_setup(
         RecursiveTemplate::Recursive2 => "Recursive2".to_string(),
         _ => airgroup_pil_name.clone(),
     };
-    let recursive_bits_threshold = proofman_common::hash_family::recursive_bits_threshold(config.hash);
-    let domain_bits = config.recursive_n_bits.unwrap_or(recursive_bits_threshold);
+    let domain_bits = config
+        .recursive_n_bits
+        .unwrap_or_else(|| proofman_common::hash_family::recursive_aggregator_bits(config.hash));
     let mut plonk_opts = PlonkOptions {
         airgroup_name: Some(plonk_airgroup_name),
         max_constraint_degree: None,

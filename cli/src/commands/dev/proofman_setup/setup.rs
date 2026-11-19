@@ -56,13 +56,14 @@ pub(crate) struct ZiskProofmanSetupSetup {
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID, value_parser = clap::builder::PossibleValuesParser::new(proofman_common::hash_family::FAMILIES))]
     pub hash: String,
 
-    /// Proofs each recursive2 circuit aggregates. Must be 2 or 3. Defaults per hash family --
-    /// 2 for blake3, 3 for poseidon.
+    /// Proofs each recursive2 circuit aggregates: 2, 3 or 4. Defaults per hash family --
+    /// 4 for blake3, 3 for poseidon.
     #[arg(long)]
     agg_arity: Option<usize>,
 
-    /// Pin every recursive air to 2^N rows instead of letting each size itself to its own gate
-    /// count. Setup fails, naming the air and both sizes, if any air needs more than N.
+    /// Rows, as log2, of the aggregator recursive1 and recursive2 share; defaults per hash family
+    /// (2^20 for blake3, see hash_family::recursive_aggregator_bits). Setup fails, naming the air
+    /// and both sizes, if any air needs more than N.
     #[arg(long, env = "RECURSIVE_N_BITS")]
     recursive_n_bits: Option<usize>,
 

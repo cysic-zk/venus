@@ -636,7 +636,7 @@ pub fn blake3_recursion_fit(counts: &HashCounts, lanes: usize) -> Blake3Recursio
     use pil2_stark_recurser::plonk2pil::setups::blake3::blake3_max_blocks;
 
     let blocks = (counts.total() as usize).div_ceil(lanes.max(1));
-    let capacity = blake3_max_blocks(1 << proofman_common::hash_family::recursive_bits_threshold("blake3"));
+    let capacity = blake3_max_blocks(1 << proofman_common::hash_family::recursive_aggregator_bits("blake3"));
     Blake3RecursionFit { blocks, capacity, needs_compressor: blocks > capacity }
 }
 

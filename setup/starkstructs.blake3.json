@@ -13,34 +13,52 @@
   },
   "InputData": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "input"
+    "recursive1Group": "input-jumpdest-dma-bext"
   },
   "JumpDest": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "input"
+    "recursive1Group": "input-jumpdest-dma-bext"
   },
   "DmaSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "dma"
+    "recursive1Group": "arith-dma-add256-small"
   },
   "DmaPrePostSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "dma"
+    "recursive1Group": "arith-dma-add256-small"
   },
   "ArithSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "arith"
+    "recursive1Group": "arith-dma-add256-small"
   },
   "Add256Small": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "arith"
+    "recursive1Group": "arith-dma-add256-small"
   },
   "BinaryExtensionSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "bext"
+    "recursive1Group": "input-jumpdest-dma-bext"
   },
   "DmaUnaligned": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "bext"
+    "recursive1Group": "input-jumpdest-dma-bext"
+  },
+  "Rom": {
+    "recursive1Group": "rom-binaryhuge"
+  },
+  "BinaryHuge": {
+    "recursive1Group": "rom-binaryhuge"
+  },
+  "VirtualTableZisk0": {
+    "recursive1Group": "vtable-memalign"
+  },
+  "MemAlignLarge": {
+    "recursive1Group": "vtable-memalign"
+  },
+  "ArithEqLarge": {
+    "recursive1Group": "aritheq-romdata"
+  },
+  "RomData": {
+    "recursive1Group": "aritheq-romdata"
   }
 }

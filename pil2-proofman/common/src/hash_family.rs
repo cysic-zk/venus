@@ -71,6 +71,23 @@ pub fn recursive_bits_threshold(family: &str) -> usize {
     }
 }
 
+/// Rows, as log2, of the aggregator that recursive1 and recursive2 share (they are one air), when
+/// `--recursive-n-bits` does not pin it.
+///
+/// blake3 runs it at twice its natural size (`recursive_bits_threshold`). One recursive2 then
+/// verifies four proofs instead of two (`default_aggregation_arity`), and recursive1 holds twice the
+/// verifications, so recursive1 batches (two Main proofs) and groups ({Rom, BinaryHuge},
+/// {VirtualTableZisk0, MemAlignLarge}, ...) fill it. On ZisK blocks this proves 2.9% (4 GPUs) to 5.1%
+/// (1 GPU) faster than 2^19 at arity 2, with recursion proofs half as many and twice as big. Poseidon
+/// keeps its natural size.
+pub fn recursive_aggregator_bits(family: &str) -> usize {
+    match family {
+        "blake3" => 20,
+        "Poseidon1" | "Poseidon2" => recursive_bits_threshold(family),
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
 /// Whether the family's FRI schedule is solved for rather than folded at a fixed rate.
 ///
 /// Worth it exactly where Merkle paths are expensive, which is where the tree is binary: a path
@@ -312,12 +329,14 @@ pub fn compressed_final_blake3_lanes(family: &str) -> Option<usize> {
 ///
 /// Every extra proof aggregated multiplies the verification work recursive2 does, and for blake3
 /// that work is almost entirely hashing: on a fibonacci recursion, recursive2's BLAKE3 gate count is
-/// exactly `arity` times recursive1's, and it alone decides the air's size. Poseidon absorbs a third
-/// proof cheaply -- arity-4 Merkle paths, and a permutation that is not the bulk of the circuit --
-/// so it keeps 3. Callers may override; both values stay valid for both families.
+/// exactly `arity` times recursive1's, and it alone decides the air's size. blake3 aggregates four in
+/// its 2^20 aggregator (`recursive_aggregator_bits`): 4 x 18,235 compressions of 74,892, with
+/// recursive1 and recursive2 keeping one more Merkle level there. Poseidon absorbs a third proof
+/// cheaply -- arity-4 Merkle paths, and a permutation that is not the bulk of the circuit -- so it
+/// keeps 3. Callers may override; every valid arity works for every family.
 pub fn default_aggregation_arity(family: &str) -> usize {
     match family {
-        "blake3" => 2,
+        "blake3" => 4,
         "Poseidon1" | "Poseidon2" => 3,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -592,13 +611,15 @@ mod tests {
         assert_eq!(super::recursive_bits_threshold("Poseidon2"), 17);
     }
 
-    /// blake3 aggregates two proofs, poseidon three: recursive2's BLAKE3 gate count is `arity` times
-    /// recursive1's, and for blake3 that count is what sizes the air.
+    /// blake3 aggregates four proofs in its 2^20 aggregator, poseidon three: recursive2's BLAKE3 gate
+    /// count is `arity` times recursive1's, and for blake3 that count is what sizes the air.
     #[test]
-    fn default_aggregation_arity_is_two_for_blake3_and_three_for_poseidon() {
-        assert_eq!(super::default_aggregation_arity("blake3"), 2);
+    fn default_aggregation_arity_is_four_for_blake3_and_three_for_poseidon() {
+        assert_eq!(super::default_aggregation_arity("blake3"), 4);
         assert_eq!(super::default_aggregation_arity("Poseidon1"), 3);
         assert_eq!(super::default_aggregation_arity("Poseidon2"), 3);
+        assert_eq!(super::recursive_aggregator_bits("blake3"), 20);
+        assert_eq!(super::recursive_aggregator_bits("Poseidon1"), super::recursive_bits_threshold("Poseidon1"));
         for f in super::FAMILIES {
             let a = super::default_aggregation_arity(f);
             assert!(crate::global_info::is_valid_aggregation_arity(a), "{f} defaults to an invalid arity {a}");

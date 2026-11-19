@@ -99,7 +99,7 @@ struct SetupArgs {
     hash: String,
 
     /// Proofs each recursive2 circuit aggregates. Must be 2 or 3. Defaults per hash family --
-    /// 2 for blake3, 3 for poseidon -- see hash_family::default_aggregation_arity.
+    /// 4 for blake3, 3 for poseidon -- see hash_family::default_aggregation_arity.
     #[arg(long)]
     agg_arity: Option<usize>,
 
