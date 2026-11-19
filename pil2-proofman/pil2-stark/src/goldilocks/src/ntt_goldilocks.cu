@@ -52,10 +52,12 @@
 #include "goldilocks_tooling.cuh"
 #include "poseidon2_goldilocks.cuh"
 #include "ntt_goldilocks.cuh"
+#include "ntt_lde_helper.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "omp.h"
 #include "poseidon2_goldilocks.hpp"
 #include <atomic>
+#include <map>
 #include <mutex>
 
 #include "timer_gl.hpp"
@@ -1487,23 +1489,93 @@ void nttTransformNN(gl64_t *base, size_t col_stride, unsigned ncols, int lg,
     NttRun{base, col_stride, ncols, lg, inverse, t, s, true}.run();
 }
 
-// Column-chunk size that keeps a transform's steps L2-resident between launches
-// (same policy as ldeColMajor; ~60% budget leaves room for tables and other traffic).
-uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
+// L2 bytes a transform's working set may take: ~60% leaves room for tables and other traffic.
+size_t nttL2Budget()
 {
     int dev = 0, l2Bytes = 0;
     CHECKCUDAERR(cudaGetDevice(&dev));
     if (cudaDeviceGetAttribute(&l2Bytes, cudaDevAttrL2CacheSize, dev) != cudaSuccess || l2Bytes <= 0)
         l2Bytes = 32 << 20;
-    uint32_t chunk = (uint32_t)(((size_t)l2Bytes * 3 / 5) / colBytes);
+    return (size_t)l2Bytes * 3 / 5;
+}
+
+// Column-chunk size that keeps a transform's steps L2-resident between launches, when `shares`
+// streams run such chunks at once (each gets its share of the budget, at least one column).
+uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols, uint32_t shares = 1)
+{
+    uint32_t chunk = (uint32_t)(nttL2Budget() / shares / colBytes);
     // Deliberately under-fills the machine (a few columns per batch): L2 residency beats
     // occupancy here, wider batches are slower.
     if (chunk < 1) chunk = 1;
     if (chunk > nCols) chunk = (uint32_t)nCols;
+    // The column is gridDim.y, whose limit is 65535.
+    if (chunk > 65535) chunk = 65535;
     return chunk;
 }
 
+// The helper streams owners attached (nttAttachLdeHelper), with the events that
+// fork one off its caller stream and join it back, by (device, caller stream). A caller stream is
+// driven by one host thread at a time, so its entry's events are never recorded concurrently.
+struct NttLdeHelper {
+    cudaStream_t stream;
+    cudaEvent_t fork, join;
+};
+
+std::mutex &nttLdeHelpersMutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+std::map<std::pair<int, cudaStream_t>, NttLdeHelper> &nttLdeHelpers()
+{
+    static std::map<std::pair<int, cudaStream_t>, NttLdeHelper> helpers;   // nodes are stable
+    return helpers;
+}
+
+NttLdeHelper *nttFindLdeHelper(cudaStream_t stream)
+{
+    int dev = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    std::lock_guard<std::mutex> lk(nttLdeHelpersMutex());
+    auto it = nttLdeHelpers().find({dev, stream});
+    return it == nttLdeHelpers().end() ? nullptr : &it->second;
+}
+
 } // anonymous namespace
+
+void nttAttachLdeHelper(cudaStream_t stream)
+{
+    if (stream == nullptr || stream == cudaStreamLegacy || stream == cudaStreamPerThread) {
+        printf("[NTT] ERROR: nttAttachLdeHelper needs a created stream, not a default-stream handle\n");
+        abort();
+    }
+    int dev = 0, prio = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    CHECKCUDAERR(cudaStreamGetPriority(stream, &prio));
+    std::lock_guard<std::mutex> lk(nttLdeHelpersMutex());
+    if (nttLdeHelpers().count({dev, stream}) != 0) return;
+    NttLdeHelper h;
+    CHECKCUDAERR(cudaStreamCreateWithPriority(&h.stream, cudaStreamNonBlocking, prio));
+    CHECKCUDAERR(cudaEventCreateWithFlags(&h.fork, cudaEventDisableTiming));
+    CHECKCUDAERR(cudaEventCreateWithFlags(&h.join, cudaEventDisableTiming));
+    nttLdeHelpers().emplace(std::make_pair(dev, stream), h);
+}
+
+void nttDetachLdeHelper(cudaStream_t stream)
+{
+    int dev = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    std::lock_guard<std::mutex> lk(nttLdeHelpersMutex());
+    auto it = nttLdeHelpers().find({dev, stream});
+    if (it == nttLdeHelpers().end()) return;
+    // Its last join is enqueued on the caller stream, so the work it tracks completes before
+    // anything the owner orders after it; destroying a stream with work pending is deferred.
+    CHECKCUDAERR(cudaEventDestroy(it->second.fork));
+    CHECKCUDAERR(cudaEventDestroy(it->second.join));
+    CHECKCUDAERR(cudaStreamDestroy(it->second.stream));
+    nttLdeHelpers().erase(it);
+}
 
 void NTTGoldilocksGPU::warmTables()
 {
@@ -1530,7 +1602,6 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
     size_t Next = (size_t)1 << nBitsExt;
     uint32_t lg_blowup = (uint32_t)(nBitsExt - nBits);
 
-    uint32_t chunk = nttL2ChunkCols(Next * sizeof(gl64_t), nCols);
     const uint32_t blowup = 1u << lg_blowup;
 
     // Integer addresses: relational comparison of pointers into different allocations is
@@ -1557,10 +1628,30 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
     // Scratch holds a staged chunk's compact iNTT result. Narrowing the batch to fit the
     // caller's region beats allocating one: the prover sizes its arenas to the last byte.
     gl64_t *scratch = (preserve_scratch != nullptr && scratch_elems >= N) ? preserve_scratch : nullptr;
+
+    // Batches alternate between the caller's stream and its attached helper while an extended
+    // column fits the L2 budget: one stream's launch tails and inter-launch drains then overlap
+    // the other's work (12-20% per LDE from nBitsExt 19 to 22, bit-identical). At 2^23 two
+    // streams evict each other's columns and lose. Never under aliasing, where a batch's writes
+    // clobber sources the previous batch may still be reading; and with a source to preserve
+    // only if the scratch stages two batches.
+    NttLdeHelper *helper = nullptr;
+    if (!overlaps && nCols >= 2 && Next * sizeof(gl64_t) <= nttL2Budget() &&
+        (!preserve_src || scratch == nullptr || scratch_elems >= 2 * N))
+        helper = nttFindLdeHelper(stream);
+    const uint32_t shares = helper != nullptr ? 2 : 1;
+
+    // Two widths, each from the stream's share of the L2 budget: the iNTT runs over batches of
+    // COMPACT columns, the forward NTT over sub-chunks of EXTENDED ones. Sizing the iNTT by the
+    // extended column ran it one column per launch from nBitsExt 22 on (a 2^20 column is 8 MB,
+    // its extension 32 MB): one or two waves of the 170 SMs with a nearly empty last one.
+    uint32_t chunk = nttL2ChunkCols(N * sizeof(gl64_t), nCols, shares);
+    const uint32_t fchunk = nttL2ChunkCols(Next * sizeof(gl64_t), nCols, shares);
+
     bool own_scratch = false;
     uint32_t stage_cols = 1;
     if (preserve_src || overlaps) {
-        size_t cap = scratch != nullptr ? scratch_elems : (size_t)chunk * N;
+        size_t cap = scratch != nullptr ? scratch_elems : (size_t)shares * chunk * N;
         if (scratch == nullptr) {
             static bool warned = false;   // on a prover path this allocates against a full arena
             if (!warned) {
@@ -1572,8 +1663,9 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         }
         // preserve_src stages every chunk, so the region caps the width; under aliasing the loop
         // tapers to a single staged column, so N suffices.
-        if (preserve_src) stage_cols = (uint32_t)std::min<size_t>(chunk, cap / N);
-        const size_t staged = (size_t)stage_cols * N;
+        // Each stream stages into its own region: the caller's stream at the base, the helper above.
+        if (preserve_src) stage_cols = (uint32_t)std::min<size_t>(chunk, cap / N / shares);
+        const size_t staged = (size_t)shares * stage_cols * N;
         // The DIT reads scratch while writing dst and the copy reads src, so it must overlap
         // neither -- and that holds only by arena-layout arithmetic.
         if (rangesOverlap(scratch, staged, d_dst_, (size_t)nCols * Next) ||
@@ -1583,6 +1675,11 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         }
     }
 
+    if (helper != nullptr) {
+        CHECKCUDAERR(cudaEventRecord(helper->fork, stream));
+        CHECKCUDAERR(cudaStreamWaitEvent(helper->stream, helper->fork, 0));
+    }
+    uint32_t batch = 0;
     for (uint32_t hi = (uint32_t)nCols; hi > 0; ) {
         uint32_t nc = std::min(chunk, hi);
         if (preserve_src) {
@@ -1600,24 +1697,38 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
 
         // Stage when src must survive, or when a chunk's output covers its own input: the
         // iNTT's first pass reads csrc and writes scratch itself, so no copy is needed.
+        const bool on_helper = helper != nullptr && (batch++ & 1);
+        cudaStream_t bs = on_helper ? helper->stream : stream;
         const gl64_t *oop_src = nullptr;
         if (preserve_src || (overlaps && (uint64_t)c0 * (blowup - 1) < nc)) {
             oop_src = csrc;
-            csrc = scratch;
+            csrc = on_helper ? scratch + (size_t)stage_cols * N : scratch;
         }
 
-        NttRun intt{csrc, N, nc, (int)nBits, true, ti, stream, false};
+        NttRun intt{csrc, N, nc, (int)nBits, true, ti, bs, false};
         intt.srcBase = oop_src;
         intt.run();
 
-        NttRun fwd{dchunk, Next, nc, (int)nBitsExt, false, tf, stream, true};
-        fwd.cosetSrc = csrc;
-        fwd.cosetPows = (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows;
-        fwd.lgBlowup = lg_blowup;
-        fwd.cosetStride = N;
-        fwd.run();
+        // Descending, like the batches: a sub-chunk's writes start at or above the compact
+        // columns the lower sub-chunks still read (the batch was sized so c0 * (blowup - 1) >= nc
+        // unless staged).
+        for (uint32_t fhi = nc; fhi > 0; ) {
+            uint32_t fnc = std::min(fchunk, fhi);
+            uint32_t f0 = fhi - fnc;
+            fhi = f0;
+            NttRun fwd{dchunk + (size_t)f0 * Next, Next, fnc, (int)nBitsExt, false, tf, bs, true};
+            fwd.cosetSrc = csrc + (size_t)f0 * N;
+            fwd.cosetPows = (const gl64_t(*)[NTT_WIN_SIZE])tf.cosetPows;
+            fwd.lgBlowup = lg_blowup;
+            fwd.cosetStride = N;
+            fwd.run();
+        }
     }
 
+    if (helper != nullptr) {
+        CHECKCUDAERR(cudaEventRecord(helper->join, helper->stream));
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, helper->join, 0));
+    }
     if (own_scratch)
         CHECKCUDAERR(cudaFreeAsync(scratch, stream));
 }
