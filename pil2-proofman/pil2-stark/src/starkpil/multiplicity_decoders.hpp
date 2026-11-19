@@ -28,6 +28,9 @@ struct MulDecoder {
     uint32_t nKey     = 0;              // key columns; 0 = no map
     uint64_t mapSlots = 0;
     const uint64_t* mapKV = nullptr;
+    // Counted by the host, which hands the whole count column in (mul_feed_host_counts): never
+    // decoded from a lookup, so no plan compiles it; folded and exported like any other.
+    bool hostFed = false;
 };
 
 #define MUL_MAP_EMPTY 0xFFFFFFFFFFFFFFFFULL
@@ -165,6 +168,12 @@ inline std::vector<MulDecoder>& mulDecoders() {
 inline const MulDecoder* mulDecoderFor(uint64_t table_id) {
     for (const auto& d : mulDecoders()) if (d.table_id == table_id) return &d;
     return nullptr;
+}
+
+// Whether lookups into the table are decoded by the prover (a host-fed table is owned, not decoded).
+inline bool mulDecodesTable(uint64_t table_id) {
+    const MulDecoder* d = mulDecoderFor(table_id);
+    return d != nullptr && !d->hostFed;
 }
 
 #endif

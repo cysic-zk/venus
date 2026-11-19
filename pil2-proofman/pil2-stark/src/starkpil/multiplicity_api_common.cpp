@@ -27,6 +27,10 @@ void mul_register_table_map(uint64_t tableId, const uint64_t *kv, uint64_t n, ui
     mul_register_table_map_impl(tableId, kv, n, slots, nKey);
 }
 
+void mul_register_host_fed_tables(const uint64_t *tableIds, uint64_t n) {
+    mul_register_host_fed_tables_impl(tableIds, n);
+}
+
 // --- queries the caller uses to decide what the host still has to build ---
 
 uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap) {

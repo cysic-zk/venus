@@ -360,6 +360,34 @@ inline const MulVtLayout* mulFullyOwnedLayout(uint64_t airKey) {
 
 inline bool mul_air_fully_owned(uint64_t airKey) { return mulFullyOwnedLayout(airKey) != nullptr; }
 
+// Set rows [start, start + n) of host-fed table `tableId` to `counts` in one of its air's device
+// accumulators (the lowest GPU's): the export and the host fold sum every device's, and nothing else
+// writes a host-fed span. Recorded as a scatter, so both wait for the copy. False when the table is
+// not host-fed or this process holds no accumulator for it.
+inline bool mul_feed_host_counts_impl(uint64_t tableId, uint64_t start, const uint64_t* counts, uint64_t n) {
+    const MulDecoder* d = mulDecoderFor(tableId);
+    if (d == nullptr || !d->hostFed) return false;
+    if (start > d->n_rows || n > d->n_rows - start) {
+        zklog.error("multiplicity: host counts for table " + std::to_string(tableId) + " rows ["
+                    + std::to_string(start) + ", " + std::to_string(start + n) + ") outside its "
+                    + std::to_string(d->n_rows) + " rows");
+        exitProcess();
+    }
+    MulAcc* acc = nullptr;
+    for (auto& kv : mulAccs())
+        if (kv.first.first == d->hostAirKey && (acc == nullptr || kv.second->gpuId < acc->gpuId)) acc = kv.second;
+    if (acc == nullptr) return false;
+    int prev = 0;
+    CHECKCUDAERR(cudaGetDevice(&prev));
+    CHECKCUDAERR(cudaSetDevice(acc->gpuId));
+    const cudaStream_t stream = mulXferStream(acc->gpuId);
+    CHECKCUDAERR(cudaMemcpyAsync(acc->d_acc + d->acc_base + start, counts, n * sizeof(uint64_t),
+                                 cudaMemcpyHostToDevice, stream));
+    mul_note_scatter(acc->gpuId, stream);
+    CHECKCUDAERR(cudaSetDevice(prev));
+    return true;
+}
+
 // Write air `airKey`'s counts straight into the committed trace at `dst`, on the device.
 // False when the air is not device-owned: the caller takes the host path, which a cross-rank
 // reduction also needs. A device-owned air that cannot be exported is fatal: nothing fills its trace.

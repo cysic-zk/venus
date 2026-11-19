@@ -112,7 +112,7 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
             if (isNum(fTy) && fTy->values[0].value == MUL_PIOP_PROVES) continue;
             if (fOp != nullptr)
                 for (const auto& ov : fOp->values)
-                    if (ov.operand == opType::number && mulDecoderFor(ov.value) != nullptr)
+                    if (ov.operand == opType::number && mulDecodesTable(ov.value))
                         return fail((uint32_t)ov.value, "its gsum_debug_data hint is not an assumes lookup the "
                                                   "plan can read");
             continue;
@@ -122,7 +122,7 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
         // or widen `srcMask`.
         bool feedsOwned = false;
         for (const auto& ov : fOp->values)
-            feedsOwned |= ov.operand == opType::number && mulDecoderFor(ov.value) != nullptr;
+            feedsOwned |= ov.operand == opType::number && mulDecodesTable(ov.value);
         if (!feedsOwned) continue;
 
         const HintField* fSel = fld("num_reps");
@@ -165,6 +165,7 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
         const Field bus = dynBus ? compile(first(fld("busid"))) : Field{};
 
         for (const auto& dec : mulDecoders()) {
+            if (dec.hostFed) continue;
             bool feeds = false;
             for (const auto& ov : fOp->values)
                 if (ov.operand == opType::number && ov.value == dec.table_id) { feeds = true; break; }

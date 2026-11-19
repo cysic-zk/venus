@@ -46,6 +46,10 @@ extern "C" {
     void mul_register_range_tables(const uint64_t *tableIds, const int64_t *biases, uint64_t n);
     void mul_register_table_map(uint64_t tableId, const uint64_t *kv, uint64_t n, uint64_t slots,
                                 uint64_t nKey);
+    // Tables the prover owns whose whole count column the host supplies (mul_feed_host_counts).
+    void mul_register_host_fed_tables(const uint64_t *tableIds, uint64_t n);
+    // Rows [start, start + n) of a host-fed table into the device accumulator; 0 if there is none.
+    uint64_t mul_feed_host_counts(uint64_t tableId, uint64_t start, const uint64_t *counts, uint64_t n);
     // Table ids whose multiplicities the prover now owns, so Std stops counting them.
     uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap);
     // Fold the prover-owned spans into `hostAcc`, which is scoped to this call and not retained.

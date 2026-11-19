@@ -260,6 +260,13 @@ impl ProverClientBuilder<AsmB> {
             options.aggregation = false;
         }
 
+        // The ROM-histogram assembly counts the frops tables whole: on GPU the prover then owns them,
+        // so the virtual table holding them is produced and committed on the device.
+        if zisk_executor::frops_from_asm_requested() {
+            options.std_owned_tables(Vec::new());
+            options.host_fed_tables(zisk_executor::frops_table_ids().to_vec());
+        }
+
         let asm = AsmProver::new(
             self.prover_options.snark,
             self.prover_options.preload_snark,

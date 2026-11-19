@@ -75,7 +75,7 @@ inline void mul_register_vt(uint64_t airgroupId, uint64_t airId,
 
 // Range tables the prover owns, as (table_id, bias). Requests and layouts arrive in either order,
 // so decoders are materialised lazily. Shared by both backends.
-struct MulOwnedReq { uint64_t table_id; int64_t bias; };
+struct MulOwnedReq { uint64_t table_id; int64_t bias; bool hostFed = false; };
 
 inline std::vector<MulOwnedReq>& mulOwnedReqs() {
     static std::vector<MulOwnedReq> v;
@@ -140,6 +140,7 @@ inline void mul_materialize_decoders() {
             d.acc_base = L.accBase.at(o.table_id);
             d.n_rows   = L.tableHeight(o.table_id);
             d.bias     = o.bias;
+            d.hostFed  = o.hostFed;
             auto mp = mulTableMaps().find(o.table_id);
             if (mp != mulTableMaps().end()) {
                 d.nKey = mp->second.nKey;
@@ -172,6 +173,23 @@ inline void mul_register_range_tables_impl(const uint64_t* tableIds, const int64
     mul_materialize_decoders();
     zklog.trace("Multiplicity: " + std::to_string(n) + " range tables requested, "
                + std::to_string(mulDecoders().size()) + " decoders registered");
+}
+
+// Tables the prover owns whose counts the host supplies whole (mul_feed_host_counts): a request
+// like a range table's, never decoded. A table cannot be both.
+inline void mul_register_host_fed_tables_impl(const uint64_t* tableIds, uint64_t n) {
+    for (uint64_t i = 0; i < n; ++i) {
+        auto it = std::find_if(mulOwnedReqs().begin(), mulOwnedReqs().end(),
+                               [&](const MulOwnedReq& o){ return o.table_id == tableIds[i]; });
+        if (it == mulOwnedReqs().end()) {
+            mulOwnedReqs().push_back({tableIds[i], 0, true});
+        } else if (!it->hostFed) {
+            zklog.error("multiplicity: table " + std::to_string(tableIds[i])
+                        + " registered both as a decoded and as a host-fed table");
+            exitProcess();
+        }
+    }
+    mul_materialize_decoders();
 }
 
 // Tables whose multiplicities the prover owns, so Std stops counting them. Writes the first `cap`

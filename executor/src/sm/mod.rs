@@ -129,7 +129,7 @@ impl<F: PrimeField64> StaticSMBundle<F> {
     ///
     /// Called right after the ROM witness, which has just read the histogram, so this does not
     /// wait for it; the virtual tables that consume the column are built after every witness.
-    pub(crate) fn publish_frops_from_asm(&self) -> ExecutorResult<()> {
+    pub(crate) fn publish_frops_from_asm(&self, pctx: &ProofCtx<F>) -> ExecutorResult<()> {
         if !zisk_core::frops::frops_multiplicity_from_asm() {
             return Ok(());
         }
@@ -142,7 +142,7 @@ impl<F: PrimeField64> StaticSMBundle<F> {
 
         cell.with(|runner| {
             let column = &runner.asm_rowh_output.frops_count;
-            frops::publish_frops_multiplicity(&self.std, column)?;
+            frops::publish_frops_multiplicity(pctx, &self.std, column)?;
             tracing::info!(
                 "FROPS multiplicity published from the assembly ({} rows); the collectors do not accumulate it",
                 column.len(),

@@ -27,6 +27,12 @@ uint64_t mul_air_device_owned(uint64_t airKey) {
     return 0;
 }
 
+// Never: no device accumulator to feed, so the caller keeps the counts with the std.
+uint64_t mul_feed_host_counts(uint64_t tableId, uint64_t start, const uint64_t *counts, uint64_t n) {
+    (void)tableId; (void)start; (void)counts; (void)n;
+    return 0;
+}
+
 // Called once every instance has counted (ProofMan waits on mul_commit_count).
 uint64_t mul_sync_commits(uint64_t expectedCommits) {
     if (mulDecoders().empty()) return MUL_SYNC_OK;

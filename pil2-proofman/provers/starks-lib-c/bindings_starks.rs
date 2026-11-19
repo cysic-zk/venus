@@ -837,6 +837,8 @@ extern "C" {
 
     pub fn mul_register_range_tables(table_ids: *const u64, biases: *const i64, n: u64);
     pub fn mul_register_table_map(table_id: u64, kv: *const u64, n: u64, slots: u64, n_key: u64);
+    pub fn mul_register_host_fed_tables(table_ids: *const u64, n: u64);
+    pub fn mul_feed_host_counts(table_id: u64, start: u64, counts: *const u64, n: u64) -> u64;
 
     pub fn mul_migrated_tables(out: *mut u64, cap: u64) -> u64;
     pub fn mul_alloc(d_buffers: *mut ::std::os::raw::c_void);

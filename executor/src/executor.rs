@@ -364,6 +364,19 @@ impl<F: PrimeField64> ZiskExecutor<F> {
         // witness, which publishes the column (`publish_frops_from_asm`).
         if let Some(witness) = self.witness.as_ref() {
             let from_asm = is_asm_emulator && self.frops_from_asm_requested.load(Ordering::Relaxed);
+            // Host-fed FROPS tables are the prover's: only the assembly's column reaches them, and the
+            // std drops the collectors' increments to a prover-owned table.
+            if !from_asm {
+                if let Some(extras) = proofman_extras {
+                    let owned = extras.pctx().prover_owned_tables.read().unwrap_or_else(|e| e.into_inner()).clone();
+                    if let Some(t) = crate::sm::frops::frops_table_ids().into_iter().find(|t| owned.contains(t)) {
+                        return Err(ExecutorError::Internal(format!(
+                            "FROPS table {t} is host-fed (the prover owns it and takes the assembly's column), \
+                             but this execution does not run the ROM-histogram assembly"
+                        )));
+                    }
+                }
+            }
             witness.set_frops_multiplicity_from_asm(from_asm);
         }
 

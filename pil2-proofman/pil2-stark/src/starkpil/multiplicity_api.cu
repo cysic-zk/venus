@@ -57,6 +57,11 @@ uint64_t mul_air_device_owned(uint64_t airKey) {
     return mul_air_fully_owned(airKey) ? 1 : 0;
 }
 
+// Host-fed table counts into the device accumulator; 0 when this process holds none for the table.
+uint64_t mul_feed_host_counts(uint64_t tableId, uint64_t start, const uint64_t *counts, uint64_t n) {
+    return mul_feed_host_counts_impl(tableId, start, counts, n) ? 1 : 0;
+}
+
 // Ordering point for the device export: once this returns MUL_SYNC_OK every instance has launched
 // its scatter, so the table's own commit sees a complete accumulator.
 uint64_t mul_sync_commits(uint64_t expectedCommits) {

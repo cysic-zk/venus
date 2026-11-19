@@ -2029,6 +2029,17 @@ pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: 
     unsafe { mul_register_table_map(table_id, kv.as_ptr(), kv.len() as u64, slots, n_key as u64) }
 }
 
+/// Tables the prover owns whose whole count column the host supplies (`mul_feed_host_counts_c`).
+pub fn mul_register_host_fed_tables_c(table_ids: &[u64]) {
+    unsafe { mul_register_host_fed_tables(table_ids.as_ptr(), table_ids.len() as u64) }
+}
+
+/// Rows `[start, start + counts.len())` of a host-fed table into the device accumulator; false when
+/// this process holds none for it.
+pub fn mul_feed_host_counts_c(table_id: u64, start: u64, counts: &[u64]) -> bool {
+    unsafe { mul_feed_host_counts(table_id, start, counts.as_ptr(), counts.len() as u64) != 0 }
+}
+
 pub fn mul_migrated_tables_c() -> Vec<u64> {
     // The C side returns the total and writes at most `cap`: size first, then fill.
     let mut out = Vec::new();

@@ -181,6 +181,9 @@ impl ProofOptions {
     }
 }
 
+/// Takes rows `[start, start + counts.len())` of a host-fed table; false when nothing holds it.
+pub type HostCountsSink = Box<dyn Fn(u64, u64, &[u64]) -> bool + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ProofmanOptions {
     pub max_number_streams: usize,
@@ -207,6 +210,10 @@ pub struct ProofmanOptions {
     /// Virtual tables the caller counts itself in the witness; the prover must not claim them. Every
     /// other table is the prover's, and one it cannot derive a row map for is a setup error.
     pub std_owned_tables: Vec<u64>,
+    /// Virtual tables the caller counts itself and hands to the prover whole, through
+    /// [`ProofCtx::feed_host_counts`]: the prover owns them like the tables it decodes, so a virtual
+    /// table holding them can still be produced on the device. GPU only; on CPU they stay std-owned.
+    pub host_fed_tables: Vec<u64>,
 
     /// Airs whose stage-1 witness a GPU kernel writes into the commit slot. They get no host trace
     /// buffer or upload, so the trace pool and prefetch zone are sized without them.
@@ -231,6 +238,7 @@ impl Default for ProofmanOptions {
             custom_commits_fixed: HashMap::new(),
             self_contained: false,
             std_owned_tables: Vec::new(),
+            host_fed_tables: Vec::new(),
             gpu_witness_airs: GpuWitnessAirs::default(),
         }
     }
@@ -312,6 +320,12 @@ impl ProofmanOptions {
         self.std_owned_tables = table_ids;
     }
 
+    /// Declare the virtual tables this caller counts itself and feeds to the prover whole. See
+    /// [`ProofmanOptions::host_fed_tables`].
+    pub fn host_fed_tables(&mut self, table_ids: Vec<u64>) {
+        self.host_fed_tables = table_ids;
+    }
+
     /// Declare the airs whose witness a GPU kernel produces on the device. Must be set before
     /// `ProofMan::new`, which sizes the trace pool and prefetch zone from it. See [`GpuWitnessAirs`].
     pub fn gpu_witness_airs(&mut self, airs: Vec<GpuWitnessAir>) {
@@ -383,6 +397,9 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Virtual-table airs the device produces end to end: the host must neither build their trace nor
     /// skip the instance for looking empty.
     pub device_owned_table_airs: RwLock<Vec<(usize, usize)>>,
+    /// Where a host-fed table's counts go (see [`ProofCtx::feed_host_counts`]). Installed by the host
+    /// binary, so the counts reach its libstarks and not the witness library's own copy.
+    pub host_counts_sink: std::sync::OnceLock<HostCountsSink>,
     pub prover_counts: RwLock<HashMap<(usize, usize), Vec<u64>>>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
@@ -430,6 +447,21 @@ fn phase_b_target(current: usize, unused: usize, mops_floor: usize, headroom_ext
 }
 
 impl<F: PrimeField64> ProofCtx<F> {
+    /// Hand rows `[start, start + counts.len())` of host-fed table `table_id` to the prover. `Ok(false)`
+    /// when the prover does not own the table (the caller keeps the counts with the std); an error when
+    /// it owns it but nothing took them, since the std drops counts of a prover-owned table.
+    pub fn feed_host_counts(&self, table_id: u64, start: u64, counts: &[u64]) -> ProofmanResult<bool> {
+        if !self.prover_owned_tables.read().unwrap().contains(&table_id) {
+            return Ok(false);
+        }
+        match self.host_counts_sink.get() {
+            Some(sink) if sink(table_id, start, counts) => Ok(true),
+            _ => Err(ProofmanError::ProofmanError(format!(
+                "table {table_id} is prover-owned but no device accumulator took its host counts"
+            ))),
+        }
+    }
+
     /// The declaration this prover's kernel for the air was registered from, or `None` when the host
     /// fills the trace. Pass it to `stage_gpu_witness`.
     pub fn gpu_witness_air(&self, airgroup_id: usize, air_id: usize) -> Option<&GpuWitnessAir> {
@@ -471,6 +503,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             prover_owned_tables: RwLock::new(Vec::new()),
             gpu_witness_airs: GpuWitnessAirs::default(),
             device_owned_table_airs: RwLock::new(Vec::new()),
+            host_counts_sink: std::sync::OnceLock::new(),
             prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,
             global_info,

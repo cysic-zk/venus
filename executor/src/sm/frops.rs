@@ -19,6 +19,7 @@
 //! each.
 
 use pil2_std_lib::Std;
+use proofman_common::ProofCtx;
 use proofman_fields::PrimeField64;
 use rayon::prelude::*;
 
@@ -56,6 +57,11 @@ const FAMILIES: [(usize, u64, u64); 3] = [
     (BinaryExtensionFrops::TABLE_ID, FROPS_BINARY_EXT_BASE, FROPS_TABLE_ROWS),
 ];
 
+/// The three FROPS family table ids, in column order.
+pub fn frops_table_ids() -> [u64; 3] {
+    FAMILIES.map(|(table_id, _, _)| table_id as u64)
+}
+
 /// Splits the global column into one slice per family table, checking it has the expected length.
 ///
 /// A length mismatch means the assembly was generated from different FROPS data than the state
@@ -71,12 +77,21 @@ fn family_slices(column: &[u64]) -> ExecutorResult<[(usize, &[u64]); 3]> {
     Ok(FAMILIES.map(|(table_id, base, end)| (table_id, &column[base as usize..end as usize])))
 }
 
-/// Publishes the whole column into the three family virtual tables.
+/// Publishes the whole column into the three family virtual tables: straight to the prover when it
+/// owns them (the host-fed tables of a GPU run, whose virtual table it then commits on the device),
+/// else into the std's counters.
 pub fn publish_frops_multiplicity<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
     std: &Std<F>,
     column: &[u64],
 ) -> ExecutorResult<()> {
     for (table_id, family) in family_slices(column)? {
+        let fed = pctx
+            .feed_host_counts(table_id as u64, 0, family)
+            .map_err(|e| ExecutorError::Internal(format!("FROPS table {table_id}: {e}")))?;
+        if fed {
+            continue;
+        }
         let id = std.get_virtual_table_id(table_id).map_err(|e| {
             ExecutorError::Internal(format!("no virtual table for FROPS table id {table_id}: {e}"))
         })?;

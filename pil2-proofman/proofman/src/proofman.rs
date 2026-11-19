@@ -11,7 +11,8 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::{aggregate_airgroupvals, expand_airgroup_values};
 use proofman_starks_lib_c::{
-    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
+    mul_alloc_c, mul_feed_host_counts_c, mul_fold_c, mul_migrated_tables_c, mul_register_host_fed_tables_c,
+    mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
     register_mul_vt_c,
 };
 use pil2_std_lib::{
@@ -3069,8 +3070,17 @@ where
     ) -> ProofmanResult<()> {
         use rayon::prelude::*;
         // What the caller kept for itself. Everything else is the prover's; a table it cannot fit is
-        // an error, since the fallback silently costs a full-table pass every proof.
-        let std_owned: std::collections::HashSet<u64> = options.std_owned_tables.iter().copied().collect();
+        // an error, since the fallback silently costs a full-table pass every proof. Host-fed tables
+        // are the prover's too, its counts handed in whole, but only on GPU: the CPU backend has no
+        // accumulator to feed, so there they stay with the caller.
+        let host_fed: std::collections::HashSet<u64> =
+            if options.gpu { options.host_fed_tables.iter().copied().collect() } else { Default::default() };
+        let std_owned: std::collections::HashSet<u64> = options
+            .std_owned_tables
+            .iter()
+            .chain(options.host_fed_tables.iter().filter(|t| !host_fed.contains(t)))
+            .copied()
+            .collect();
 
         let owned: Vec<(u64, i64)> =
             collect_prover_owned_ranges(pctx, sctx)?.into_iter().filter(|(id, _)| !std_owned.contains(id)).collect();
@@ -3086,8 +3096,12 @@ where
 
         // Unkept and unclaimed by both the range path and the fitter (`unclaimed_ids` excludes the
         // fitted ones): fail with the ids rather than run a slow path.
-        let unaddressed: Vec<u64> =
-            vt_summary.unaddressed_ids.iter().copied().filter(|t| !std_owned.contains(t)).collect();
+        let unaddressed: Vec<u64> = vt_summary
+            .unaddressed_ids
+            .iter()
+            .copied()
+            .filter(|t| !std_owned.contains(t) && !host_fed.contains(t))
+            .collect();
         if !unaddressed.is_empty() {
             tracing::info!("Virtual tables {unaddressed:?} are not looked up by their own id; the std counts them");
         }
@@ -3095,7 +3109,12 @@ where
             .unclaimed_ids
             .iter()
             .copied()
-            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t) && !vt_summary.unaddressed_ids.contains(t))
+            .filter(|t| {
+                !std_owned.contains(t)
+                    && !host_fed.contains(t)
+                    && !range_owned.contains(t)
+                    && !vt_summary.unaddressed_ids.contains(t)
+            })
             .collect();
         if !orphans.is_empty() {
             let why: Vec<String> = orphans
@@ -3121,7 +3140,7 @@ where
         let owning = |t: &u64| {
             hosted.contains(t)
                 && !std_owned.contains(t)
-                && (range_owned.contains(t) || fitted.iter().any(|m| m.table_id == *t))
+                && (range_owned.contains(t) || host_fed.contains(t) || fitted.iter().any(|m| m.table_id == *t))
         };
         if let Some(t) = global_sum_assumed_tables(sctx)?.into_iter().find(owning) {
             return Err(ProofmanError::InvalidSetup(format!(
@@ -3166,8 +3185,12 @@ where
         let maps: Vec<_> = fitted.iter().filter(|m| !std_owned.contains(&m.table_id)).collect();
         let mut map_ids: Vec<u64> = maps.iter().map(|m| m.table_id).collect();
         map_ids.sort_unstable();
+        // A host-fed table no virtual-table air hosts has nowhere to be counted: the std keeps it.
+        let mut host_fed_ids: Vec<u64> = host_fed.iter().copied().filter(|t| hosted.contains(t)).collect();
+        host_fed_ids.sort_unstable();
         let mut h = blake3::Hasher::new();
         hash_words(&mut h, &range_ids);
+        hash_words(&mut h, &host_fed_ids);
         hash_words(&mut h, &range_biases.iter().map(|b| *b as u64).collect::<Vec<_>>());
         hash_words(&mut h, &map_ids);
         // The slot programs are compiled for one row layout: packed and unpacked runs must not share them.
@@ -3199,6 +3222,9 @@ where
                 for m in &maps {
                     let (nkey, kv, slots) = &m.map;
                     mul_register_table_map_c(m.table_id, kv, *nkey, *slots);
+                }
+                if !host_fed_ids.is_empty() {
+                    mul_register_host_fed_tables_c(&host_fed_ids);
                 }
                 for l in &layouts {
                     register_mul_vt_c(l.airgroup_id, l.air_id, l.num_rows, l.num_cols, &l.table_ids, &l.acc_bases);
@@ -3263,6 +3289,12 @@ where
         }
         // Read lazily by the std (VirtualTableAir::is_prover_owned), through this shared ProofCtx.
         *pctx.prover_owned_tables.write().unwrap() = migrated;
+        // Installed from the host binary, so a feed from the witness library reaches this libstarks.
+        if !host_fed_ids.is_empty() {
+            let _ = pctx.host_counts_sink.set(Box::new(|table_id, start, counts| {
+                mul_feed_host_counts_c(table_id, start, counts)
+            }));
+        }
         Ok(())
     }
 

@@ -405,7 +405,7 @@ impl<F: PrimeField64> WitnessPhase<F> {
 
         // After the trace is handed over, so the ROM proof does not wait on the copy.
         if !self.frops_published.swap(true, Ordering::Relaxed) {
-            self.sm_bundle.publish_frops_from_asm()?;
+            self.sm_bundle.publish_frops_from_asm(ctx.pctx)?;
         }
         Ok(())
     }
