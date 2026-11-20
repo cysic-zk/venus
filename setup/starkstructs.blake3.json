@@ -13,35 +13,35 @@
   },
   "InputData": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "input-jumpdest-dma-bext"
+    "recursive1Group": "input-jumpdest-dma-bext-add256"
   },
   "JumpDest": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "input-jumpdest-dma-bext"
+    "recursive1Group": "input-jumpdest-dma-bext-add256"
   },
   "DmaSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "arith-dma-add256-small"
+    "recursive1Group": "arith-dma-small-romdata"
   },
   "DmaPrePostSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "arith-dma-add256-small"
+    "recursive1Group": "arith-dma-small-romdata"
   },
   "ArithSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "arith-dma-add256-small"
+    "recursive1Group": "arith-dma-small-romdata"
   },
   "Add256Small": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "arith-dma-add256-small"
+    "recursive1Group": "input-jumpdest-dma-bext-add256"
   },
   "BinaryExtensionSmall": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "input-jumpdest-dma-bext"
+    "recursive1Group": "input-jumpdest-dma-bext-add256"
   },
   "DmaUnaligned": {
     "initialBlowupFactor": 2,
-    "recursive1Group": "input-jumpdest-dma-bext"
+    "recursive1Group": "input-jumpdest-dma-bext-add256"
   },
   "Rom": {
     "recursive1Group": "rom-binaryhuge"
@@ -56,9 +56,78 @@
     "recursive1Group": "vtable-memalign"
   },
   "ArithEqLarge": {
-    "recursive1Group": "aritheq-romdata"
+    "recursive1Group": "aritheq-dma64-large"
   },
   "RomData": {
-    "recursive1Group": "aritheq-romdata"
+    "recursive1Group": "arith-dma-small-romdata"
+  },
+  "Dma64AlignedLarge": {
+    "recursive1Group": "aritheq-dma64-large"
+  },
+  "BinaryExtension": {
+    "recursive1Group": "bext-dmaprepost"
+  },
+  "DmaPrePost": {
+    "recursive1Group": "bext-dmaprepost"
+  },
+  "BinaryAddHiLarge": {
+    "recursive1Group": "binaryaddhi-large-memalign-readbyte"
+  },
+  "MemAlignReadByte": {
+    "recursive1Group": "binaryaddhi-large-memalign-readbyte"
+  },
+  "Arith256X": {
+    "recursive1Group": "arith256x-secp256k1-large"
+  },
+  "ArithSecp256K1Large": {
+    "recursive1Group": "arith256x-secp256k1-large"
+  },
+  "BinaryAdd": {
+    "recursive1Group": "binaryadd-memalign"
+  },
+  "MemAlign": {
+    "recursive1Group": "binaryadd-memalign"
+  },
+  "ArithEq": {
+    "recursive1Group": "aritheq-dma64"
+  },
+  "Dma64Aligned": {
+    "recursive1Group": "aritheq-dma64"
+  },
+  "Binary": {
+    "recursive1Group": "binary-binaryaddhi-huge"
+  },
+  "BinaryAddHiHuge": {
+    "recursive1Group": "binary-binaryaddhi-huge"
+  },
+  "Arith": {
+    "recursive1Group": "arith-memalign-readbyte-large"
+  },
+  "MemAlignReadByteLarge": {
+    "recursive1Group": "arith-memalign-readbyte-large"
+  },
+  "ArithEq384": {
+    "recursive1Group": "aritheq384-binaryaddhi"
+  },
+  "BinaryAddHi": {
+    "recursive1Group": "aritheq384-binaryaddhi"
+  },
+  "BinaryAddHuge": {
+    "recursive1Group": "binaryadd-huge-binary-large"
+  },
+  "BinaryLarge": {
+    "recursive1Group": "binaryadd-huge-binary-large"
+  },
+  "ArithSecp256K1": {
+    "recursive1Group": "secp256k1-dma"
+  },
+  "Dma": {
+    "recursive1Group": "secp256k1-dma"
+  },
+  "ArithBn254Large": {
+    "recursive1Group": "bn254-eq384-large"
+  },
+  "ArithEq384Large": {
+    "recursive1Group": "bn254-eq384-large"
   }
 }
