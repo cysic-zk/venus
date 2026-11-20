@@ -1,15 +1,13 @@
 {
   "Keccakf": {
-    "hasCompressor": true
+    "recursive1Group": "keccakf-sha256f"
   },
   "Poseidon2KoalaBear": {
     "hasCompressor": true
   },
-  "KeccakfHalf": {
-    "hasCompressor": true
-  },
   "Sha256f": {
-    "initialBlowupFactor": 2
+    "initialBlowupFactor": 2,
+    "recursive1Group": "keccakf-sha256f"
   },
   "InputData": {
     "initialBlowupFactor": 2,
