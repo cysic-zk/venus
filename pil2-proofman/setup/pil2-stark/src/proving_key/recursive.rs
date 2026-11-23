@@ -1088,6 +1088,7 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
 
 /// Locate an already-installed `pil2com`, checking (in order):
 ///   1. `PIL2C_EXEC` environment variable
+///   1b. The monorepo's vendored compiler ([`vendored_pil2com`])
 ///   2. The setup crate's own dir (compile-time baked) — covers consumers that
 ///      use proofman as a path/git dependency from another workspace
 ///   3. `node_modules/.bin/pil2com` relative to cwd
@@ -1101,6 +1102,9 @@ fn resolve_pil2com_exec() -> Option<String> {
         if Path::new(&path).is_file() {
             return Some(path);
         }
+    }
+    if let Some(path) = vendored_pil2com() {
+        return Some(path);
     }
     // npm install in the setup crate dir (this crate sits at <root>/setup/pil2-stark)
     const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
@@ -1132,6 +1136,40 @@ fn resolve_pil2com_exec() -> Option<String> {
     }
     // Global install on PATH
     which::which("pil2com").ok().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// The PIL compiler the monorepo vendors (`<repo>/pil2-compiler`, beside `pil2-proofman/`), with its
+/// Node dependencies installed from its lockfile on first use.
+///
+/// Every release key is built with it, and a setup from this repository must be too: the npm
+/// package the later steps would fetch follows a git branch, and another compiler builds another
+/// pilout, so another verification key, which the release verifier rejects. A failed install is
+/// reported and the vendored path returned anyway, so the compile fails instead of silently
+/// switching compilers.
+fn vendored_pil2com() -> Option<String> {
+    const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
+    let dir = Path::new(CRATE_ROOT).join("../../../pil2-compiler");
+    let pil = dir.join("src").join("pil.js");
+    if !pil.is_file() {
+        return None;
+    }
+    let dir = dir.canonicalize().unwrap_or(dir);
+    if !dir.join("node_modules").is_dir() {
+        tracing::info!("Installing the vendored pil2-compiler's Node dependencies: `npm ci` in {}", dir.display());
+        let ok = std::process::Command::new("npm")
+            .arg("ci")
+            .current_dir(&dir)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !ok {
+            tracing::error!(
+                "`npm ci` failed in {}: install Node.js 20+ and npm, then run it there by hand",
+                dir.display()
+            );
+        }
+    }
+    pil.canonicalize().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,

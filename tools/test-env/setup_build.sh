@@ -262,6 +262,22 @@ cd "$ROOT_DIR"
 # PIL2C_EXEC (which the pil2-stark-setup crate honors first). No-op when there is
 # no override; then proofman's own pinned version is used.
 apply_zisk_compiler_override() {
+  # A PIL2C_EXEC the caller set wins. Otherwise the monorepo's vendored pil2-compiler, the one every
+  # release key is built with: the override below follows a git branch, and another compiler builds
+  # another pilout, so another verification key.
+  [ -z "${PIL2C_EXEC:-}" ] || { echo "==> using PIL2C_EXEC=$PIL2C_EXEC" >&2; return 0; }
+  local vendored="$ROOT_DIR/pil2-compiler"
+  if [ -f "$vendored/src/pil.js" ]; then
+    if [ ! -d "$vendored/node_modules" ]; then
+      command -v npm >/dev/null || { echo "npm not on PATH (needed once by the vendored pil2-compiler)" >&2; exit 1; }
+      echo "==> installing the vendored pil2-compiler's Node dependencies (npm ci in $vendored)" >&2
+      (cd "$vendored" && npm ci)
+    fi
+    export PIL2C_EXEC="$vendored/src/pil.js"
+    echo "==> using the vendored pil2-compiler: PIL2C_EXEC=$PIL2C_EXEC" >&2
+    return 0
+  fi
+
   local override
   override="$(read_zisk_pil2_compiler_override)"
   [ -n "$override" ] || return 0
