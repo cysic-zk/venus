@@ -245,7 +245,7 @@ impl<H: AsmShmemHeader> AsmMultiShmem<H> {
             // The producer decides how many files get mapped: a MAP_FIXED mapping past the
             // reservation would replace unrelated mappings of this process, and pages past the
             // end of the backing object raise SIGBUS when touched.
-            if offset.checked_add(file_size).is_none_or(|end| end > self.reserved_size) {
+            if offset.checked_add(file_size).map_or(true, |end| end > self.reserved_size) {
                 close(fd);
                 return Err(anyhow!(
                     "Shared memory '{}' does not fit in the {} bytes reserved for '{}'",
@@ -318,7 +318,8 @@ impl<H: AsmShmemHeader> AsmMultiShmem<H> {
         unsafe { (self.reserved_ptr as *const H).read() }
     }
 
-    /// Returns the base pointer of the mapped region.
+    /// Returns the base pointer of the mapped region. Only the GPU memory planner registers it.
+    #[cfg(any(gpu, test))]
     pub fn mapped_ptr(&self) -> *mut c_void {
         self.reserved_ptr
     }
@@ -328,7 +329,8 @@ impl<H: AsmShmemHeader> AsmMultiShmem<H> {
         unsafe { self.reserved_ptr.add(size_of::<H>()) }
     }
 
-    /// Returns the total currently mapped size.
+    /// Returns the total currently mapped size. Only the GPU memory planner registers it.
+    #[cfg(any(gpu, test))]
     pub fn total_mapped_size(&self) -> usize {
         self.total_mapped_size
     }

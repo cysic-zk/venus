@@ -350,7 +350,7 @@ impl<F: PrimeField64> DmaStrategy<F> {
     /// lands in the short air.
     fn ladder_heights(instances: [usize; 2], rows: [usize; 2]) -> Vec<usize> {
         let mut heights = vec![rows[0]; instances[0]];
-        heights.extend(std::iter::repeat_n(rows[1], instances[1]));
+        heights.extend(std::iter::repeat(rows[1]).take(instances[1]));
         heights
     }
 

@@ -129,7 +129,7 @@ impl ZiskBuildToolchain {
 
         // Build the toolchain.
         Command::new("python3")
-            .env("RUST_TARGET_PATH", &temp_dir)
+            .env("RUST_TARGET_PATH", temp_dir)
             .env("CARGO_TARGET_RISCV64IMA_ZISK_ZKVM_ELF_RUSTFLAGS", "-Cpasses=lower-atomic")
             .args([
                 "x.py",

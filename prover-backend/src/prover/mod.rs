@@ -34,10 +34,6 @@ use zisk_precomp_hints::HintsProcessor;
 
 use crate::{ExecuteOutput, ProveOutput, VerifyConstraintsOutput};
 
-/// Virtual tables ZisK counts itself: the frops, whose collectors tally them during the witness.
-/// Mirrors `ARITH_FROPS_TABLE_ID` and friends in `pil/opids.pil`; kept here rather than imported so
-/// this file does not depend on a state-machine crate for three integers.
-
 /// ASM-specific configuration options
 #[derive(Clone, Default)]
 pub struct AsmOptions {
