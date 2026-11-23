@@ -483,11 +483,12 @@ case "$MODE" in
     SNARK_MODE="$(proving_key_hash_mode "$BUILD_DIR/provingKey")" || exit 1
     echo "wrapping a $SNARK_MODE proving key with $FINAL_SNARK"
 
-    PTAU_PATH="${PTAU_PATH:-../powersOfTau28_hez_final_24.ptau}"
+    PTAU_PATH="${PTAU_PATH:-../ppot_0080_25.ptau}"
     if [ ! -f "$PTAU_PATH" ]; then
       echo "missing powers-of-tau file: $PTAU_PATH" >&2
-      echo "download it (~18 GB) into the parent folder of the repo with:" >&2
-      echo "  (cd .. && curl -L -O https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_24.ptau)" >&2
+      echo "download the Perpetual Powers of Tau file ppot_0080_25.ptau (38,654,798,994 bytes, SHA-256" >&2
+      echo "a91fd8e8ed3332b5ebafc90bc05329c874133f7d47c6bfe33e26dca0c2d11ee1) into the parent folder of the repo with:" >&2
+      echo "  (cd .. && curl -L -O https://pse-trusted-setup-ppot.s3.eu-central-1.amazonaws.com/pot28_0080/ppot_0080_25.ptau)" >&2
       echo "or point PTAU_PATH=/path/to/ptau at an existing copy." >&2
       exit 1
     fi

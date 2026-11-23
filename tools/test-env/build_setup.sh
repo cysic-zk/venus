@@ -26,7 +26,7 @@
 #   HASH_MODE                    Hash mode the setup is generated with
 #                                (default: blake3).
 #   PTAU_PATH                    Powers-of-tau file for the snark setup
-#                                (default: ../powersOfTau28_hez_final_24.ptau).
+#                                (default: ../ppot_0080_25.ptau, see setup_build.sh).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/utils.sh"

@@ -9,7 +9,7 @@
 #   --build-root DIR      Where each family is built, as DIR/<f>. Default: build-release.
 #   --setup-jobs N        Forwarded to setup_build.sh. Default: 4.
 #   --recursive-jobs N    Forwarded to setup_build.sh. Default: 4.
-#   --ptau PATH           Powers of tau for setup-snark. Default: setup_common.sh's PTAU_PATH.
+#   --ptau PATH           Powers of tau for setup-snark. Default: setup_build.sh's PTAU_PATH.
 #   --skip-setup          Reuse DIR/<f> as it is (implies --keep-build).
 #   --compressed-only     Only the compressed stage changed: no SNARK, keep the pilfflonk
 #                         artifacts, and wrap the committed leaf fixture.
