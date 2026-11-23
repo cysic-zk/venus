@@ -268,7 +268,8 @@ apply_zisk_compiler_override() {
   [ -z "${PIL2C_EXEC:-}" ] || { echo "==> using PIL2C_EXEC=$PIL2C_EXEC" >&2; return 0; }
   local vendored="$ROOT_DIR/pil2-compiler"
   if [ -f "$vendored/src/pil.js" ]; then
-    if [ ! -d "$vendored/node_modules" ]; then
+    # npm writes node_modules/.package-lock.json last, so a partial install has none.
+    if [ ! -f "$vendored/node_modules/.package-lock.json" ]; then
       command -v npm >/dev/null || { echo "npm not on PATH (needed once by the vendored pil2-compiler)" >&2; exit 1; }
       echo "==> installing the vendored pil2-compiler's Node dependencies (npm ci in $vendored)" >&2
       (cd "$vendored" && npm ci)

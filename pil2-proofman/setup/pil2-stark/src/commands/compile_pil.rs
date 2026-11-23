@@ -36,10 +36,7 @@ pub struct CompilePilOptions {
 pub fn run_compile_pil(opts: &CompilePilOptions) -> Result<()> {
     tracing::info!("Compiling PIL: {}", opts.pil_path);
 
-    let pil2com_exec = ensure_pil2com_exec().context(
-        "Cannot find pil2com and automatic `npm install` did not produce it. Install Node.js/npm \
-         and run `npm install` in the pil2-proofman repo root",
-    )?;
+    let pil2com_exec = ensure_pil2com_exec(opts.field.as_deref()).map_err(anyhow::Error::msg)?;
     tracing::info!("Using pil2com: {}", pil2com_exec);
 
     if opts.include_paths.is_empty() {

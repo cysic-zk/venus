@@ -1089,7 +1089,7 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
 
 /// Locate an already-installed `pil2com`, checking (in order):
 ///   1. `PIL2C_EXEC` environment variable
-///   1b. The monorepo's vendored compiler ([`vendored_pil2com`])
+///   1b. For a compile over Goldilocks, the monorepo's vendored compiler ([`vendored_pil2com`])
 ///   2. The setup crate's own dir (compile-time baked) — covers consumers that
 ///      use proofman as a path/git dependency from another workspace
 ///   3. `node_modules/.bin/pil2com` relative to cwd
@@ -1098,28 +1098,30 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
 ///
 /// Pure lookup — installs nothing. [`ensure_pil2com_exec`] is the entry point
 /// that bootstraps when every step here misses.
-fn resolve_pil2com_exec() -> Option<String> {
+fn resolve_pil2com_exec(goldilocks: bool) -> Result<Option<String>, String> {
     if let Ok(path) = std::env::var("PIL2C_EXEC") {
         if Path::new(&path).is_file() {
-            return Some(path);
+            return Ok(Some(path));
         }
     }
-    if let Some(path) = vendored_pil2com() {
-        return Some(path);
+    if goldilocks {
+        if let Some(path) = vendored_pil2com()? {
+            return Ok(Some(path));
+        }
     }
     // npm install in the setup crate dir (this crate sits at <root>/setup/pil2-stark)
     const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
     let baked = Path::new(CRATE_ROOT).join("node_modules/.bin/pil2com");
     if baked.is_file() {
         if let Ok(abs) = baked.canonicalize() {
-            return abs.to_str().map(|s| s.to_string());
+            return Ok(abs.to_str().map(|s| s.to_string()));
         }
     }
     // Local npm install (preferred)
     let local_npm = Path::new("node_modules/.bin/pil2com");
     if local_npm.is_file() {
         if let Ok(abs) = local_npm.canonicalize() {
-            return abs.to_str().map(|s| s.to_string());
+            return Ok(abs.to_str().map(|s| s.to_string()));
         }
     }
     // Walk up from the executable's location
@@ -1129,33 +1131,34 @@ fn resolve_pil2com_exec() -> Option<String> {
             let candidate = d.join("node_modules/.bin/pil2com");
             if candidate.is_file() {
                 if let Ok(abs) = candidate.canonicalize() {
-                    return abs.to_str().map(|s| s.to_string());
+                    return Ok(abs.to_str().map(|s| s.to_string()));
                 }
             }
             dir = d.parent();
         }
     }
     // Global install on PATH
-    which::which("pil2com").ok().map(|p| p.to_string_lossy().into_owned())
+    Ok(which::which("pil2com").ok().map(|p| p.to_string_lossy().into_owned()))
 }
 
 /// The PIL compiler the monorepo vendors (`<repo>/pil2-compiler`, beside `pil2-proofman/`), with its
-/// Node dependencies installed from its lockfile on first use.
+/// Node dependencies installed from its lockfile (`npm ci`) until an install has completed.
 ///
 /// Every release key is built with it, and a setup from this repository must be too: the npm
-/// package the later steps would fetch follows a git branch, and another compiler builds another
-/// pilout, so another verification key, which the release verifier rejects. A failed install is
-/// reported and the vendored path returned anyway, so the compile fails instead of silently
-/// switching compilers.
-fn vendored_pil2com() -> Option<String> {
+/// package the later steps would fetch follows another version, and another compiler builds
+/// another pilout, so another verification key, which the release verifier rejects. Goldilocks
+/// only: it has no `--field`, which the BN128 wrap of the SNARK setup needs. A failed install is
+/// an error, never a fall back to another compiler.
+fn vendored_pil2com() -> Result<Option<String>, String> {
     const CRATE_ROOT: &str = env!("CARGO_MANIFEST_DIR");
     let dir = Path::new(CRATE_ROOT).join("../../../pil2-compiler");
     let pil = dir.join("src").join("pil.js");
     if !pil.is_file() {
-        return None;
+        return Ok(None);
     }
     let dir = dir.canonicalize().unwrap_or(dir);
-    if !dir.join("node_modules").is_dir() {
+    // npm writes node_modules/.package-lock.json last, so a partial install has none.
+    if !dir.join("node_modules").join(".package-lock.json").is_file() {
         tracing::info!("Installing the vendored pil2-compiler's Node dependencies: `npm ci` in {}", dir.display());
         let ok = std::process::Command::new("npm")
             .arg("ci")
@@ -1164,13 +1167,13 @@ fn vendored_pil2com() -> Option<String> {
             .map(|status| status.success())
             .unwrap_or(false);
         if !ok {
-            tracing::error!(
-                "`npm ci` failed in {}: install Node.js 20+ and npm, then run it there by hand",
+            return Err(format!(
+                "`npm ci` failed in {}: install Node.js 20+ and npm, and run `npm ci` there",
                 dir.display()
-            );
+            ));
         }
     }
-    pil.canonicalize().ok().map(|p| p.to_string_lossy().into_owned())
+    Ok(pil.canonicalize().ok().map(|p| p.to_string_lossy().into_owned()))
 }
 
 /// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
@@ -1187,9 +1190,23 @@ fn vendored_pil2com() -> Option<String> {
 /// The result is memoized: a recursive setup calls this once per air (and again
 /// per compressor attempt), and neither the PATH scan nor a failed bootstrap
 /// gets cheaper by being repeated.
-pub(crate) fn ensure_pil2com_exec() -> Option<String> {
-    static PIL2COM_EXEC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    PIL2COM_EXEC.get_or_init(|| resolve_pil2com_exec().or_else(|| bootstrapped_node_path(".bin/pil2com"))).clone()
+///
+/// `field` is the compile's `--field` (`None`: Goldilocks): a compile over BN128 needs a compiler
+/// that has `--field`, so it never takes the vendored one.
+pub(crate) fn ensure_pil2com_exec(field: Option<&str>) -> Result<String, String> {
+    type Memo = std::sync::OnceLock<Result<String, String>>;
+    static GOLDILOCKS: Memo = std::sync::OnceLock::new();
+    static OTHER: Memo = std::sync::OnceLock::new();
+    let goldilocks = field.map_or(true, |f| f.eq_ignore_ascii_case("goldilocks"));
+    let memo = if goldilocks { &GOLDILOCKS } else { &OTHER };
+    memo.get_or_init(|| {
+        resolve_pil2com_exec(goldilocks)?.or_else(|| bootstrapped_node_path(".bin/pil2com")).ok_or_else(|| {
+            "Cannot find pil2com and automatic `npm install` did not produce it. Install Node.js/npm \
+             and run `npm install` in the pil2-proofman repo root"
+                .to_string()
+        })
+    })
+    .clone()
 }
 
 /// Install the Node deps if needed and return the absolute path to `probe`
