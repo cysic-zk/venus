@@ -174,9 +174,7 @@ impl ZiskRom {
             for section in sections {
                 let bytes = (section.data.len() as u64).checked_mul(8);
                 let fits = bytes.is_some_and(|bytes| {
-                    section.addr >= start
-                        && bytes <= size
-                        && section.addr - start <= size - bytes
+                    section.addr >= start && bytes <= size && section.addr - start <= size - bytes
                 });
                 if !fits {
                     return Err(format!(

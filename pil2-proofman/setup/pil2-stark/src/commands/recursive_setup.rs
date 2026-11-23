@@ -204,7 +204,10 @@ pub(crate) fn run_recursive_setup(
         for (g, members) in &groups {
             let names: Vec<&str> = members.iter().map(|&i| air_items[i].air_name.as_str()).collect();
             if members.len() < 2 || members.len() > max_slots {
-                anyhow::bail!("recursive1 group '{g}' has {} members {names:?}; a group has 2 to {max_slots}", members.len());
+                anyhow::bail!(
+                    "recursive1 group '{g}' has {} members {names:?}; a group has 2 to {max_slots}",
+                    members.len()
+                );
             }
             if members[0] == 0 {
                 anyhow::bail!(
@@ -214,7 +217,10 @@ pub(crate) fn run_recursive_setup(
                 );
             }
             if let Some(&i) = members.iter().find(|&&i| air_items[i].has_compressor) {
-                anyhow::bail!("recursive1 group '{g}': '{}' has a compressor, so it verifies another shape", air_items[i].air_name);
+                anyhow::bail!(
+                    "recursive1 group '{g}': '{}' has a compressor, so it verifies another shape",
+                    air_items[i].air_name
+                );
             }
             let ids: Vec<usize> = members.iter().map(|&i| air_items[i].air_idx).collect();
             tracing::info!("recursive1 group '{g}': {names:?} share one circuit");
@@ -449,8 +455,8 @@ pub(crate) fn run_recursive_setup(
                     .map(|i| {
                         let item = &air_items[i];
                         let group = members_of(i);
-                        let (air_idx, vk, _, hc, _, batch) =
-                            run_one_air(item, existing_for_rest.clone(), &group).inspect_err(|e| {
+                        let (air_idx, vk, _, hc, _, batch) = run_one_air(item, existing_for_rest.clone(), &group)
+                            .inspect_err(|e| {
                                 tracing::error!("Recursive setup FAILED for air '{}': {e:#}", item.air_name)
                             })?;
                         Ok((air_idx, item.air_name.clone(), vk, hc, batch))

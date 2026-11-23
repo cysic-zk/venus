@@ -154,7 +154,8 @@ impl AsmRunnerMT {
                         match preloaded.output_shmem.check_size_changed() {
                             Ok(true) => {
                                 // Update threshold based on new total mapped size
-                                threshold = preloaded.output_shmem.growth_threshold(threshold_bytes);
+                                threshold =
+                                    preloaded.output_shmem.growth_threshold(threshold_bytes);
                             }
                             Ok(false) => {}
                             Err(e) => {
@@ -166,7 +167,8 @@ impl AsmRunnerMT {
                         }
                     }
 
-                    let (chunk, mem_reads) = match preloaded.output_shmem.read_chunk(&mut data_ptr) {
+                    let (chunk, mem_reads) = match preloaded.output_shmem.read_chunk(&mut data_ptr)
+                    {
                         Ok(read) => read,
                         Err(e) => {
                             signal_runner_failure();

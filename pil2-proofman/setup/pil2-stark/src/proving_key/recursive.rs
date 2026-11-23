@@ -368,9 +368,8 @@ pub fn gen_recursive_setup(
         RecursiveTemplate::Recursive2 => "Recursive2".to_string(),
         _ => airgroup_pil_name.clone(),
     };
-    let domain_bits = config
-        .recursive_n_bits
-        .unwrap_or_else(|| proofman_common::hash_family::recursive_aggregator_bits(config.hash));
+    let domain_bits =
+        config.recursive_n_bits.unwrap_or_else(|| proofman_common::hash_family::recursive_aggregator_bits(config.hash));
     let mut plonk_opts = PlonkOptions {
         airgroup_name: Some(plonk_airgroup_name),
         max_constraint_degree: None,
@@ -432,8 +431,9 @@ pub fn gen_recursive_setup(
                     )),
                     ..pil2circom_opts.clone()
                 };
-                let verifier_circom = crate::io::recurser::pil2circom(m.const_root, m.stark_info, m.verifier_info, &opts)
-                    .with_context(|| format!("pil2circom failed for group member '{}'", m.air_name))?;
+                let verifier_circom =
+                    crate::io::recurser::pil2circom(m.const_root, m.stark_info, m.verifier_info, &opts)
+                        .with_context(|| format!("pil2circom failed for group member '{}'", m.air_name))?;
                 let name = format!("{}.group.verifier.circom", m.air_name);
                 fs::write(circom_dir.join(&name), &verifier_circom)?;
                 verifier_filenames.push(name);
@@ -512,8 +512,9 @@ pub fn gen_recursive_setup(
         let mut capacity = 0u64;
         let mut shares = Vec::new();
         for m in config.group {
-            let f = recursion_batch_fit(config.hash, domain_bits, lanes, m.stark_info)
-                .with_context(|| format!("recursive1 groups need a {} verifier fit (member '{}')", config.hash, m.air_name))?;
+            let f = recursion_batch_fit(config.hash, domain_bits, lanes, m.stark_info).with_context(|| {
+                format!("recursive1 groups need a {} verifier fit (member '{}')", config.hash, m.air_name)
+            })?;
             total += f.per_proof;
             capacity = f.capacity;
             shares.push(format!("{} {:.1}%", m.air_name, 100.0 * f.per_proof as f64 / f.capacity as f64));

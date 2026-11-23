@@ -102,13 +102,11 @@ impl<F: PrimeField64> ComponentBuilder<F> for BinarySM<F> {
             )),
             BinaryExtensionTrace::<()>::AIR_ID
             | BinaryExtensionLargeTrace::<()>::AIR_ID
-            | BinaryExtensionSmallTrace::<()>::AIR_ID => {
-                Box::new(BinaryExtensionInstance::new(
-                    self.binary_extension_sm.clone(),
-                    ictx,
-                    self.std.clone(),
-                ))
-            }
+            | BinaryExtensionSmallTrace::<()>::AIR_ID => Box::new(BinaryExtensionInstance::new(
+                self.binary_extension_sm.clone(),
+                ictx,
+                self.std.clone(),
+            )),
             BinaryAddTrace::<()>::AIR_ID
             | BinaryAddLargeTrace::<()>::AIR_ID
             | BinaryAddHugeTrace::<()>::AIR_ID => {

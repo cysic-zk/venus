@@ -12,8 +12,7 @@ use colored::Colorize;
 use proofman_hints::{aggregate_airgroupvals, expand_airgroup_values};
 use proofman_starks_lib_c::{
     mul_alloc_c, mul_feed_host_counts_c, mul_fold_c, mul_migrated_tables_c, mul_register_host_fed_tables_c,
-    mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
-    register_mul_vt_c,
+    mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
 };
 use pil2_std_lib::{
     collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps, global_sum_assumed_tables,
@@ -3294,9 +3293,9 @@ where
         *pctx.prover_owned_tables.write().unwrap() = migrated;
         // Installed from the host binary, so a feed from the witness library reaches this libstarks.
         if !host_fed_ids.is_empty() {
-            let _ = pctx.host_counts_sink.set(Box::new(|table_id, start, counts| {
-                mul_feed_host_counts_c(table_id, start, counts)
-            }));
+            let _ = pctx
+                .host_counts_sink
+                .set(Box::new(|table_id, start, counts| mul_feed_host_counts_c(table_id, start, counts)));
         }
         Ok(())
     }
@@ -4094,76 +4093,75 @@ where
 
                     // Ready witnesses (recursive2, compressor), then the recursive1 circuits a proof completed,
                     // whose witnesses are generated one at a time below, each handed off before the next.
-                    let (witnesses, rec1_inputs): (Vec<Proof<F>>, Vec<crate::Recursive1Inputs<F>>) = if new_proof_type
-                        == ProofType::Recursive2 as usize
-                    {
-                        let proof = if p == ProofType::Recursive1 {
-                            recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
-                        } else {
-                            recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap()
-                        };
-
-                        let recursive2_proof = {
-                            let mut recursive2_airgroup_proofs =
-                                recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
-                            recursive2_airgroup_proofs.push(proof);
-
-                            let arity = pctx_clone.global_info.aggregation_arity;
-                            if recursive2_airgroup_proofs.len() >= arity {
-                                let chunk: Vec<_> =
-                                    (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
-                                Some(chunk)
+                    let (witnesses, rec1_inputs): (Vec<Proof<F>>, Vec<crate::Recursive1Inputs<F>>) =
+                        if new_proof_type == ProofType::Recursive2 as usize {
+                            let proof = if p == ProofType::Recursive1 {
+                                recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
                             } else {
-                                None
-                            }
-                        };
+                                recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap()
+                            };
 
-                        match recursive2_proof {
-                            Some(chunk) => {
-                                match gen_witness_aggregation(
-                                    &pctx_clone,
-                                    &memory_handler_recursive_witness,
-                                    &setups_clone,
-                                    &chunk.iter().collect::<Vec<_>>(),
-                                ) {
-                                    Ok(witness) => (vec![witness], Vec::new()),
-                                    Err(e) => {
-                                        tracing::info!(
-                                            "Error generating recursive2 witness from recursive proofs: {}",
-                                            e
-                                        );
-                                        cancellation_info_clone.write_recover().cancel(Some(e));
-                                        break;
+                            let recursive2_proof = {
+                                let mut recursive2_airgroup_proofs =
+                                    recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                                recursive2_airgroup_proofs.push(proof);
+
+                                let arity = pctx_clone.global_info.aggregation_arity;
+                                if recursive2_airgroup_proofs.len() >= arity {
+                                    let chunk: Vec<_> =
+                                        (0..arity).map(|_| recursive2_airgroup_proofs.pop().unwrap()).collect();
+                                    Some(chunk)
+                                } else {
+                                    None
+                                }
+                            };
+
+                            match recursive2_proof {
+                                Some(chunk) => {
+                                    match gen_witness_aggregation(
+                                        &pctx_clone,
+                                        &memory_handler_recursive_witness,
+                                        &setups_clone,
+                                        &chunk.iter().collect::<Vec<_>>(),
+                                    ) {
+                                        Ok(witness) => (vec![witness], Vec::new()),
+                                        Err(e) => {
+                                            tracing::info!(
+                                                "Error generating recursive2 witness from recursive proofs: {}",
+                                                e
+                                            );
+                                            cancellation_info_clone.write_recover().cancel(Some(e));
+                                            break;
+                                        }
                                     }
                                 }
+                                None => (Vec::new(), Vec::new()),
                             }
-                            None => (Vec::new(), Vec::new()),
-                        }
-                    } else if new_proof_type == ProofType::Compressor as usize {
-                        // Compressors are never batched; only the recursive1 above them.
-                        let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        match gen_witness_recursive(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &proof,
-                        ) {
-                            Ok(witness) => (vec![witness], Vec::new()),
-                            Err(e) => {
-                                tracing::info!("Error generating compressor witness: {}", e);
-                                cancellation_info_clone.write_recover().cancel(Some(e));
-                                break;
+                        } else if new_proof_type == ProofType::Compressor as usize {
+                            // Compressors are never batched; only the recursive1 above them.
+                            let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
+                            match gen_witness_recursive(
+                                &pctx_clone,
+                                &memory_handler_recursive_witness,
+                                &setups_clone,
+                                &proof,
+                            ) {
+                                Ok(witness) => (vec![witness], Vec::new()),
+                                Err(e) => {
+                                    tracing::info!("Error generating compressor witness: {}", e);
+                                    cancellation_info_clone.write_recover().cancel(Some(e));
+                                    break;
+                                }
                             }
-                        }
-                    } else {
-                        // Held until the air's batch is full.
-                        let proof = if p == ProofType::Compressor {
-                            compressor_proofs_clone[id as usize].write().unwrap().take().unwrap()
                         } else {
-                            proofs_clone[id as usize].write().unwrap().take().unwrap()
+                            // Held until the air's batch is full.
+                            let proof = if p == ProofType::Compressor {
+                                compressor_proofs_clone[id as usize].write().unwrap().take().unwrap()
+                            } else {
+                                proofs_clone[id as usize].write().unwrap().take().unwrap()
+                            };
+                            (Vec::new(), rec1_batcher_clone.offer(&pctx_clone, proof))
                         };
-                        (Vec::new(), rec1_batcher_clone.offer(&pctx_clone, proof))
-                    };
 
                     let mut ready = witnesses.into_iter();
                     let mut rec1_inputs = rec1_inputs.into_iter();

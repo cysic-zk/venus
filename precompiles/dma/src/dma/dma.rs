@@ -225,14 +225,16 @@ impl<F: PrimeField64> DmaModule<F> for DmaSM<F> {
             (false, false) => {
                 self.compute_witness_inner::<DmaTraceRow<F>, ROWS, AIR_ID>(inputs, trace_buffer)
             }
-            (true, true) => self.compute_witness_inner::<DmaTraceRowPacked<F>, SMALL_ROWS, SMALL_AIR_ID>(
-                inputs,
-                trace_buffer,
-            ),
-            (true, false) => self.compute_witness_inner::<DmaTraceRow<F>, SMALL_ROWS, SMALL_AIR_ID>(
-                inputs,
-                trace_buffer,
-            ),
+            (true, true) => self
+                .compute_witness_inner::<DmaTraceRowPacked<F>, SMALL_ROWS, SMALL_AIR_ID>(
+                    inputs,
+                    trace_buffer,
+                ),
+            (true, false) => self
+                .compute_witness_inner::<DmaTraceRow<F>, SMALL_ROWS, SMALL_AIR_ID>(
+                    inputs,
+                    trace_buffer,
+                ),
         }
     }
 }

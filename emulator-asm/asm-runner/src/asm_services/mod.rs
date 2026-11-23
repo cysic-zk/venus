@@ -124,7 +124,8 @@ mod tests {
             [CMD_RH_REQUEST_ID, 5, 0, 0, 0]
         );
         assert_eq!(
-            MemoryOperationsRequest { max_steps: 1, chunk_len: 2, results_job: 7 }.to_request_payload(),
+            MemoryOperationsRequest { max_steps: 1, chunk_len: 2, results_job: 7 }
+                .to_request_payload(),
             [CMD_MO_REQUEST_ID, 1, 2, 7, 0]
         );
         assert_eq!(ResetRequest.to_request_payload(), [CMD_RESET_REQUEST_ID, 0, 0, 0, 0]);

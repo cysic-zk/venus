@@ -167,9 +167,9 @@ pub struct ZiskInst {
     pub verbose: String,
     pub riscv_inst: Option<String>,
     pub next_internal_inst: Option<u64>, // connection to next internal odd instruction, if any
-    pub external_ref_addr: Option<u64>, // external address of the instruction, if any
-    pub meta_rs1: Option<u8>, // meta information used for callstack.
-    pub meta_rd: Option<u8>, // meta information used for callstack.
+    pub external_ref_addr: Option<u64>,  // external address of the instruction, if any
+    pub meta_rs1: Option<u8>,            // meta information used for callstack.
+    pub meta_rd: Option<u8>,             // meta information used for callstack.
 }
 
 // The fields a replay step reads fill exactly the first two cache lines.

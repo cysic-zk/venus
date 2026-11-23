@@ -529,7 +529,13 @@ mod tests {
         let out = define_stark_inputs(
             &si,
             "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false, verifier_suffix: None },
+            &StarkInputOptions {
+                add_publics: false,
+                is_final: true,
+                parallel: false,
+                shared_publics: false,
+                verifier_suffix: None,
+            },
         );
         assert!(out.contains("signal input s0_siblingsC[4][3][4];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levelsC[16];"), "out:\n{out}");
@@ -543,7 +549,13 @@ mod tests {
         let out = define_stark_inputs(
             &si,
             "",
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false, verifier_suffix: None },
+            &StarkInputOptions {
+                add_publics: false,
+                is_final: true,
+                parallel: false,
+                shared_publics: false,
+                verifier_suffix: None,
+            },
         );
         assert!(out.contains("signal input s0_siblingsC[4][5][4];"), "out:\n{out}");
         assert!(!out.contains("last_levels"), "out:\n{out}");
@@ -556,7 +568,13 @@ mod tests {
             "sV",
             "",
             &si,
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false, verifier_suffix: None },
+            &StarkInputOptions {
+                add_publics: false,
+                is_final: true,
+                parallel: false,
+                shared_publics: false,
+                verifier_suffix: None,
+            },
             &EnableInput::None,
         );
         assert!(out.contains("sV.s0_last_levelsC <== s0_last_levelsC;"), "out:\n{out}");

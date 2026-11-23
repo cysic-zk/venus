@@ -25,7 +25,10 @@ pub fn gpu_witness_airs() -> Vec<::proofman_common::GpuWitnessAir> {
         // Both heights of the air share the kernel: it sizes the fill by the instance's rows.
         [
             (::zisk_pil::KeccakfTrace::<()>::AIRGROUP_ID, ::zisk_pil::KeccakfTrace::<()>::AIR_ID),
-            (::zisk_pil::KeccakfHalfTrace::<()>::AIRGROUP_ID, ::zisk_pil::KeccakfHalfTrace::<()>::AIR_ID),
+            (
+                ::zisk_pil::KeccakfHalfTrace::<()>::AIRGROUP_ID,
+                ::zisk_pil::KeccakfHalfTrace::<()>::AIR_ID,
+            ),
         ]
         .into_iter()
         .map(|(airgroup_id, air_id)| {

@@ -235,7 +235,10 @@ pub fn group_air_id_vars(stark_infos: &[Value]) -> String {
         if let Some(recorded) = si["circuitType"].as_u64() {
             assert_eq!(recorded, circuit_type, "starkInfo.circuitType disagrees with ({ag}, {air})");
         }
-        out.push_str(&format!("    var circuitType{} = circuitTypeOf(airgroupId, {air} + 1);\n", group_slot_suffix(air)));
+        out.push_str(&format!(
+            "    var circuitType{} = circuitTypeOf(airgroupId, {air} + 1);\n",
+            group_slot_suffix(air)
+        ));
     }
     out
 }

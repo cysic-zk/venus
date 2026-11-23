@@ -368,8 +368,15 @@ impl<F: PrimeField64> ZiskExecutor<F> {
             // std drops the collectors' increments to a prover-owned table.
             if !from_asm {
                 if let Some(extras) = proofman_extras {
-                    let owned = extras.pctx().prover_owned_tables.read().unwrap_or_else(|e| e.into_inner()).clone();
-                    if let Some(t) = crate::sm::frops::frops_table_ids().into_iter().find(|t| owned.contains(t)) {
+                    let owned = extras
+                        .pctx()
+                        .prover_owned_tables
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    if let Some(t) =
+                        crate::sm::frops::frops_table_ids().into_iter().find(|t| owned.contains(t))
+                    {
                         return Err(ExecutorError::Internal(format!(
                             "FROPS table {t} is host-fed (the prover owns it and takes the assembly's column), \
                              but this execution does not run the ROM-histogram assembly"

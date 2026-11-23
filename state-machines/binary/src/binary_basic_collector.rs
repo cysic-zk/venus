@@ -6,9 +6,7 @@ use crate::{
     add_family_kind, BinaryBasicFrops, BinaryCollectCursor, BinaryInput, ChunkCollect,
     CollectAction, ADD_KINDS,
 };
-use zisk_common::{
-    BusDevice, BusId, A, B, OP, OPERATION_BUS_ID, OP_TYPE,
-};
+use zisk_common::{BusDevice, BusId, A, B, OP, OPERATION_BUS_ID, OP_TYPE};
 use zisk_core::frops::frops_multiplicity_from_asm;
 #[cfg(feature = "debug_frops")]
 use zisk_core::frops::{frops_check_claim_row, frops_check_enabled, FROPS_BINARY_BASIC_BASE};

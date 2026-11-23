@@ -232,7 +232,8 @@ pub fn gen_witness_recursive_group<F: PrimeField64>(
     members: &[usize],
     slots: &[Option<Proof<F>>],
 ) -> ProofmanResult<Proof<F>> {
-    let first = slots.iter().flatten().next().ok_or_else(|| ProofmanError::ProofmanError("Empty recursive1 group".into()))?;
+    let first =
+        slots.iter().flatten().next().ok_or_else(|| ProofmanError::ProofmanError("Empty recursive1 group".into()))?;
     if slots.len() != members.len() {
         return Err(ProofmanError::ProofmanError(format!(
             "Recursive1 group {members:?} has {} slots, got {}",
@@ -352,8 +353,10 @@ pub fn recursive1_counts_per_airgroup(
                 .filter(|(air, _)| !grouped(*air))
                 .map(|(air, &n)| n.div_ceil(batch.get(ag).and_then(|b| b.get(air)).copied().unwrap_or(1).max(1)))
                 .sum();
-            let group: usize =
-                ag_groups.iter().map(|g| g.iter().map(|&air| airs.get(air).copied().unwrap_or(0)).max().unwrap_or(0)).sum();
+            let group: usize = ag_groups
+                .iter()
+                .map(|g| g.iter().map(|&air| airs.get(air).copied().unwrap_or(0)).max().unwrap_or(0))
+                .sum();
             single + group
         })
         .collect()

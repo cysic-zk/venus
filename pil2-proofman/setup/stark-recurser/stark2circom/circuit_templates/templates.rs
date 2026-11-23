@@ -70,7 +70,13 @@ pub(super) fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
 
 /// Port of `src/recursion/templates/recursivef.circom.ejs`.
 pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String], _opts: &CircomGenOptions) -> Result<String> {
-    let def_opts = StarkInputOptions { add_publics: true, is_final: false, parallel: false, shared_publics: false, verifier_suffix: None };
+    let def_opts = StarkInputOptions {
+        add_publics: true,
+        is_final: false,
+        parallel: false,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
     let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
     let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0);
@@ -93,7 +99,13 @@ pub fn gen_recursion_final(
     publics: Option<&Value>,
     _opts: &CircomGenOptions,
 ) -> Result<String> {
-    let def_opts = StarkInputOptions { add_publics: true, is_final: true, parallel: false, shared_publics: false, verifier_suffix: None };
+    let def_opts = StarkInputOptions {
+        add_publics: true,
+        is_final: true,
+        parallel: false,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
     let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
     let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
 
@@ -269,7 +281,13 @@ pub fn gen_final_compressed(
     let n_publics_real = n_publics.saturating_sub(1);
     let has_publics = if opts.has_recursion { n_publics > 4 } else { n_publics > 0 };
 
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false, verifier_suffix: None };
+    let def_opts = StarkInputOptions {
+        add_publics: false,
+        is_final: false,
+        parallel: false,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
@@ -293,7 +311,13 @@ pub fn gen_compressor(
     let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
 
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false, verifier_suffix: None };
+    let def_opts = StarkInputOptions {
+        add_publics: false,
+        is_final: false,
+        parallel: false,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
 
     let mut pub_names: Vec<&str> = Vec::new();
     if n_publics > 0 {
@@ -337,10 +361,21 @@ pub fn gen_recursive1(
     let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
 
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false, verifier_suffix: None };
+    let def_opts = StarkInputOptions {
+        add_publics: false,
+        is_final: false,
+        parallel: false,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
     // The k proofs are of one air and one run, so their verifiers read the template's publics.
-    let assign_opts =
-        StarkInputOptions { add_publics: !has_compressor, is_final: false, parallel: k > 1, shared_publics: true, verifier_suffix: None };
+    let assign_opts = StarkInputOptions {
+        add_publics: !has_compressor,
+        is_final: false,
+        parallel: k > 1,
+        shared_publics: true,
+        verifier_suffix: None,
+    };
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
@@ -582,8 +617,20 @@ pub fn gen_recursive2(
         .map(|a| a.len())
         .unwrap_or(0);
 
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false, verifier_suffix: None };
-    let par_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: true, shared_publics: false, verifier_suffix: None };
+    let def_opts = StarkInputOptions {
+        add_publics: false,
+        is_final: false,
+        parallel: false,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
+    let par_opts = StarkInputOptions {
+        add_publics: false,
+        is_final: false,
+        parallel: true,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
     let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, set_enable_input: multi_air, parallel: true };
 
     // rootCBasics inline array assignments
@@ -670,7 +717,13 @@ pub fn gen_vadcop_final(
         vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
     let multi_air = air_groups_len > 1 || airs_0_len > 1;
 
-    let def_opts = StarkInputOptions { add_publics: false, is_final: false, parallel: false, shared_publics: false, verifier_suffix: None };
+    let def_opts = StarkInputOptions {
+        add_publics: false,
+        is_final: false,
+        parallel: false,
+        shared_publics: false,
+        verifier_suffix: None,
+    };
     let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, set_enable_input: multi_air, parallel: false };
 
     // Pre-render per-airgroup define and assign sections

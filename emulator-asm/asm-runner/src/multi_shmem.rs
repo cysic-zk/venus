@@ -476,8 +476,10 @@ mod tests {
             let next = header + 3 * 8;
             w.write_u64_at(next, ((initial - next) / 8) as u64).unwrap();
         }
-        let m = AsmMultiShmem::<TestHeader>::open_and_map(&base, initial, initial, initial, true, false)
-            .unwrap();
+        let m = AsmMultiShmem::<TestHeader>::open_and_map(
+            &base, initial, initial, initial, true, false,
+        )
+        .unwrap();
         let mut cursor = m.data_ptr() as *const TestChunk;
         let (chunk, payload) = m.read_chunk(&mut cursor).unwrap();
         assert_eq!((chunk.payload, payload.len()), (2, 2));

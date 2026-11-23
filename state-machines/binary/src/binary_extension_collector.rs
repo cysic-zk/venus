@@ -6,9 +6,7 @@ use crate::{
     BinaryCollectCursor, BinaryExtensionFrops, BinaryInput, ChunkCollect, CollectAction, EXT_KINDS,
     KIND_EXT,
 };
-use zisk_common::{
-    BusDevice, BusId, A, B, OP, OPERATION_BUS_ID, OP_TYPE,
-};
+use zisk_common::{BusDevice, BusId, A, B, OP, OPERATION_BUS_ID, OP_TYPE};
 
 use pil2_std_lib::Std;
 use proofman_fields::PrimeField64;

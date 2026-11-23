@@ -380,8 +380,7 @@ impl AsmRunnerMO {
             stats_begin!(_thread_stats, _parent_id, _mo_scope, "ASM_MO", 0);
 
             #[allow(clippy::let_and_return)]
-            let result =
-                asm_services.send_memory_ops_request(max_steps, chunk_size, results_job);
+            let result = asm_services.send_memory_ops_request(max_steps, chunk_size, results_job);
 
             stats_end!(_thread_stats, &_mo_scope);
 
@@ -470,7 +469,8 @@ impl AsmRunnerMO {
                         match preloaded.output_shmem.check_size_changed() {
                             Ok(true) => {
                                 // Update threshold based on new total mapped size
-                                threshold = preloaded.output_shmem.growth_threshold(threshold_bytes);
+                                threshold =
+                                    preloaded.output_shmem.growth_threshold(threshold_bytes);
                                 #[cfg(gpu)]
                                 if let Some(ref gpu_count_and_plan) = gpu_count_and_plan_opt {
                                     register_mo_shmem_pinned(

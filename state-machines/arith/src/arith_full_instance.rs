@@ -114,16 +114,16 @@ impl<F: PrimeField64> Instance<F> for ArithFullInstance<F> {
             ($trace:ident) => {
                 if packed {
                     self.arith_full_sm.compute_witness::<
-                        ArithTraceRowPacked<F>,
-                        { $trace::<()>::NUM_ROWS },
-                        { $trace::<()>::AIR_ID },
-                    >(&inputs, trace_buffer)?
+                                                                        ArithTraceRowPacked<F>,
+                                                                        { $trace::<()>::NUM_ROWS },
+                                                                        { $trace::<()>::AIR_ID },
+                                                                    >(&inputs, trace_buffer)?
                 } else {
                     self.arith_full_sm.compute_witness::<
-                        ArithTraceRow<F>,
-                        { $trace::<()>::NUM_ROWS },
-                        { $trace::<()>::AIR_ID },
-                    >(&inputs, trace_buffer)?
+                                                                        ArithTraceRow<F>,
+                                                                        { $trace::<()>::NUM_ROWS },
+                                                                        { $trace::<()>::AIR_ID },
+                                                                    >(&inputs, trace_buffer)?
                 }
             };
         }
