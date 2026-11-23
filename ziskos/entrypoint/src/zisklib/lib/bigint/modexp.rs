@@ -17,7 +17,8 @@ use super::{
 
 /// Modular exponentiation of three large numbers
 ///
-/// It assumes that modulus > 0 and len(base),len(exp),len(modulus) > 0
+/// It assumes that len(base),len(exp),len(modulus) > 0 and that no operand has leading zero
+/// limbs. A zero modulus gives zero (EIP-198).
 pub fn modexp(
     base: &[U256],
     exp: &[u64],
@@ -41,8 +42,6 @@ pub fn modexp(
         }
         if len_m > 1 {
             assert!(!modulus[len_m - 1].is_zero(), "Modulus must not have leading zeros");
-        } else {
-            assert!(!modulus[0].is_zero(), "Modulus must not be zero");
         }
     }
 
