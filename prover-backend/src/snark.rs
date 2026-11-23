@@ -29,7 +29,8 @@ pub fn snark_protocol_of_key(proving_key_snark: &Path) -> Result<SnarkProtocol> 
     }
 }
 
-/// Errors unless the final SNARK key of `proving_key_snark` is set up for `protocol`.
+/// Errors unless the final SNARK key of `proving_key_snark` is set up for `protocol`. A missing
+/// or unusable key says how to generate one: Venus publishes none.
 pub fn ensure_snark_key(protocol: SnarkProtocol, proving_key_snark: &Path) -> Result<()> {
     match snark_protocol_of_key(proving_key_snark) {
         Ok(found) if found == protocol => Ok(()),
@@ -39,7 +40,11 @@ pub fn ensure_snark_key(protocol: SnarkProtocol, proving_key_snark: &Path) -> Re
             proving_key_snark.display(),
             found.name()
         )),
-        Err(e) => Err(anyhow!("a {} final SNARK was asked for, but {e}", protocol.name())),
+        Err(e) => Err(anyhow!(
+            "a {} final SNARK was asked for, but {e}. {}",
+            protocol.name(),
+            zisk_setup::REGENERATE_SNARK_KEY
+        )),
     }
 }
 
