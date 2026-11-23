@@ -22,10 +22,10 @@ contract ZiskVerifier is PilfflonkVerifier, IZiskVerifier {
     function getRootCVadcopFinal() external pure returns (bytes32) {
         return bytes32(
             abi.encodePacked(
-                uint64(7235627588029747190),
-                uint64(4964294244843319518),
-                uint64(15944021041411876293),
-                uint64(9165814394267558940)));
+                uint64(3182186370080328716),
+                uint64(12563819335885145081),
+                uint64(14560845723196067463),
+                uint64(3055073783397912426)));
     }
 
     uint256 internal constant _RFIELD =

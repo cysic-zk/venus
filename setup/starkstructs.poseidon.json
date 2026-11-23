@@ -92,5 +92,8 @@
   },
   "ArithEqLarge": {
     "hasCompressor": true
+  },
+  "KeccakfHalf": {
+    "hasCompressor": true
   }
 }
