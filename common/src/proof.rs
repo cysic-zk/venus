@@ -123,6 +123,21 @@ fn ensure_stored_body(body: &ProofBody) -> Result<()> {
 
 /// What to pass when a proof fails under the release key: a custom setup's key for the
 /// proof's own stage.
+/// The error for a key from an earlier release (`what` says which key: the one passed, or the one a
+/// proof was made with). A proof from that release's proving key is not one this release can check:
+/// say so, and how to make this release's key, instead of only failing.
+fn outdated_key_error(what: &str, key: &zisk_verifier::PreviousReleaseKey) -> CommonError {
+    let stage = if key.compressed { "vadcop_final_compressed" } else { "vadcop_final" };
+    CommonError::InvalidProof(format!(
+        "{what} is the {} {stage} key of {}, an earlier release, whose proofs this release does \
+         not verify. {} Then prove again. To check a proof made with {}, use its cargo-zisk.",
+        key.hash,
+        key.release,
+        zisk_setup::REGENERATE_PROVING_KEY,
+        key.release
+    ))
+}
+
 fn hint_setup_vk(trusted_setup_vk: Option<&[u64]>, compressed: bool) -> Option<String> {
     let stage = if compressed { "vadcop_final_compressed" } else { "vadcop_final" };
     trusted_setup_vk.is_none().then(|| {
@@ -963,6 +978,9 @@ impl<'a> ZiskVerifyBuilder<'a> {
         let rootc: &[u64] = &rootc;
         // export-solidity-calldata reads the stored copy.
         if stored_rootc != rootc {
+            if let Some(old) = zisk_verifier::previous_release_of(stored_rootc) {
+                return Err(outdated_key_error("the key this proof was generated with", old));
+            }
             return Err(CommonError::InvalidProof(format!(
                 "stored `rootc` does not match the setup vk the proof is verified under{}",
                 hint_setup_vk(self.trusted_setup_vk, false)
@@ -1076,6 +1094,9 @@ impl<'a> ZiskVerifyBuilder<'a> {
                 return Err(CommonError::InvalidProof(
                     "setup vk override has a non-canonical Goldilocks limb".to_string(),
                 ));
+            }
+            if let Some(old) = zisk_verifier::previous_release_of(vk) {
+                return Err(outdated_key_error("the setup vk passed", old));
             }
         }
         if let Some(pv) = self.override_publics {
@@ -1224,6 +1245,12 @@ impl<'a> ZiskVerifyBuilder<'a> {
                         // The claimed key is untrusted; it only tells a genuine proof from
                         // another setup apart from a broken one.
                         if zisk_vk.as_slice() != setup_vk.as_slice() {
+                            if let Some(old) = zisk_verifier::previous_release_of(zisk_vk) {
+                                return Err(outdated_key_error(
+                                    "the key this proof was generated with",
+                                    old,
+                                ));
+                            }
                             if let Some(hint) =
                                 hint_setup_vk(self.trusted_setup_vk, kind.is_minimal())
                             {

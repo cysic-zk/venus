@@ -30,9 +30,11 @@ pub mod poseidon2 {
 
 mod decode;
 pub mod keys;
+mod previous_keys;
 mod verifier;
 
 pub use decode::*;
 pub use keys::*;
+pub use previous_keys::*;
 pub use proofman_verifier::VadcopFinalProof;
 pub use verifier::*;

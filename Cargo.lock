@@ -7565,6 +7565,7 @@ dependencies = [
  "zisk-core",
  "zisk-definitions",
  "zisk-pil",
+ "zisk-setup",
  "zisk-stream",
  "zisk-verifier",
 ]
