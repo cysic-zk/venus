@@ -313,7 +313,13 @@ compute_input_hash() (
   # when there is no override. Shared resolver with the installer.
   local pil2_compiler_version pil2_compiler_override
   pil2_compiler_override="$(read_zisk_pil2_compiler_override)"
-  if [ -n "$pil2_compiler_override" ]; then
+  # Key by the compiler setup_build.sh actually takes (apply_zisk_compiler_override): a caller's
+  # PIL2C_EXEC, else the vendored one, by content; the override and package.json only otherwise.
+  if [ -n "${PIL2C_EXEC:-}" ]; then
+    pil2_compiler_version="pil2c-exec:$(sha256_hex < "$PIL2C_EXEC")"
+  elif [ -f "$ROOT_DIR/pil2-compiler/src/pil.js" ]; then
+    pil2_compiler_version="vendored:$( (cd "$ROOT_DIR/pil2-compiler" && find src lib package-lock.json -type f -print0 | sort -z | xargs -0 cat) | sha256_hex )"
+  elif [ -n "$pil2_compiler_override" ]; then
     pil2_compiler_version="$pil2_compiler_override"
   else
     pil2_compiler_version="$(sed -nE 's/.*"pil2-compiler"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$PROOFMAN_DIR/setup/pil2-stark/package.json" | head -n1)"

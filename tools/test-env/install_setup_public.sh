@@ -24,7 +24,10 @@ main () {
     info "Using setup file: ${ZISK_SETUP_FILE}"
 
     step  "Downloading public proving key ${ZISK_SETUP_FILE}..."
-    ensure curl -L -#o "${ZISK_SETUP_FILE}" "https://storage.googleapis.com/zisk-setup/${ZISK_SETUP_FILE}" || return 1
+    # --fail: an HTTP error must stop here, before the installed key is removed below. Venus
+    # publishes no keys, so for a Venus setup version this always fails: generate the key with
+    # tools/test-env/setup_build.sh instead.
+    ensure curl -fL -#o "${ZISK_SETUP_FILE}" "https://storage.googleapis.com/zisk-setup/${ZISK_SETUP_FILE}" || return 1
 
     step "Installing public proving ${ZISK_SETUP_FILE}..."
     ensure rm -rf "$HOME/.zisk/provingKey/"
