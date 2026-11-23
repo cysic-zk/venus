@@ -29,6 +29,8 @@ ZisK currently supports **Linux x86_64** and **macOS** platforms (see note below
     curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
     ```
 
+    > **Venus:** `ziskup` installs ZisK and its proving key, which Venus v0.5.0 refuses. Build the tools from the Venus repository and generate the proving key from it instead, as the [installation guide](./installation.md#option-2-building-from-source) describes.
+
 ## Create a Project
 
 The first step is to generate a new example project using the `cargo-zisk new <name>` command. This command creates a new directory named `<name>` in your current directory. For example:
