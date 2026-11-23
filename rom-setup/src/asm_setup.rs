@@ -171,7 +171,8 @@ pub fn ensure_ziskclib(emu_dir: &Path, source: EmulatorAsmSource) -> Result<()> 
         EmulatorAsmSource::Installed => {
             if !target_lib_path.exists() {
                 anyhow::bail!(
-                    "Pre-built libziskclib.a not found at: {}\nPlease ensure zisk is properly installed via ziskup",
+                    "Pre-built libziskclib.a not found at: {}\nBuild the tools from the repository \
+                     (`cargo build --release`): Venus publishes no prebuilt binaries",
                     target_lib_path.display()
                 );
             }

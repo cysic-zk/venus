@@ -2,7 +2,7 @@ use crate::execute_client::ExecuteClient;
 use crate::guest::ProgramId;
 use crate::GuestProgram;
 use crate::{
-    check_paths_exist, check_snark_key,
+    check_snark_key,
     prover::{ProverBackend, ProverEngine, ProverJob, ZiskBackend, ZiskProver},
     ExecuteOutput, ProveOutput, VerifyConstraintsOutput, ZiskAggPhaseResult, ZiskPhaseResult,
 };
@@ -407,7 +407,6 @@ impl EmuCoreProver {
         options: ProofmanOptions,
         logging_config: Option<LoggingConfig>,
     ) -> Result<Self> {
-        check_paths_exist(&proving_key)?;
         zisk_setup::check_setup_version(&proving_key)?;
 
         let proofman = ProofMan::new(proving_key.clone(), options.clone())
@@ -425,7 +424,6 @@ impl EmuCoreProver {
 
         let mut snark_wrapper = None;
         if use_snark_wrapper {
-            check_paths_exist(&proving_key_snark)?;
             check_snark_key(&proving_key, &proving_key_snark)?;
             let (aux_trace, d_buffers, reload_fixed_pols_gpu) = proofman.get_preallocated_buffers();
             snark_wrapper = Some(SnarkWrapper::new_with_preallocated_buffers(

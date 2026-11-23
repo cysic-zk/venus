@@ -24,13 +24,21 @@ pub const REGENERATE_SNARK_KEY: &str = "Generate it again for this proving key, 
     $HOME/.zisk/provingKeySnark (see \"SNARK wrapper\" in README.md).";
 
 /// Fails unless the key at `proving_key` was built for [`ZISK_SETUP_VERSION`]. A key without
-/// `setupVersion` is rejected too.
+/// `setupVersion` is rejected too, and a missing one is reported with how to generate it: no
+/// release publishes keys, so there is nothing to download.
 pub fn check_setup_version(proving_key: &Path) -> Result<()> {
     check(proving_key, ZISK_SETUP_VERSION)
 }
 
 fn check(proving_key: &Path, expected: &str) -> Result<()> {
     let path = proving_key.join("pilout.globalInfo.json");
+    if !path.is_file() {
+        return Err(Error::other(format!(
+            "no proving key at {} ({} is missing). {REGENERATE_PROVING_KEY}",
+            proving_key.display(),
+            path.display(),
+        )));
+    }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| Error::other(format!("failed to read {}: {e}", path.display())))?;
     let info: serde_json::Value = serde_json::from_str(&text)

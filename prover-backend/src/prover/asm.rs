@@ -879,7 +879,6 @@ impl AsmCoreProver {
         logging_config: Option<LoggingConfig>,
         cpu_mops: bool,
     ) -> Result<Self> {
-        check_paths_exist(&proving_key)?;
         zisk_setup::check_setup_version(&proving_key)?;
         let proofman = ProofMan::new(proving_key.clone(), options.clone())
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -901,7 +900,6 @@ impl AsmCoreProver {
 
         let mut snark_wrapper = None;
         if use_snark_wrapper {
-            check_paths_exist(&proving_key_snark)?;
             check_snark_key(&proving_key, &proving_key_snark)?;
             let (aux_trace, d_buffers, reload_fixed_pols_gpu) = proofman.get_preallocated_buffers();
             snark_wrapper = Some(SnarkWrapper::new_with_preallocated_buffers(
