@@ -55,6 +55,29 @@ pub fn get_asm_paths(elf: &GuestProgram, with_hints: bool) -> Result<(String, St
     Ok((file_name(mt), file_name(rh)))
 }
 
+/// A SNARK key wraps one vadcop_final key, recorded as its `vadcop_final.verkey.json`: refuse one
+/// made for another proving key (before the proving key was generated again, or by another
+/// release), which would wrap proofs into SNARKs that verify under nothing this key proves.
+pub fn check_snark_key(proving_key: &Path, proving_key_snark: &Path) -> Result<()> {
+    let wraps_path = proving_key_snark.join("vadcop_final.verkey.json");
+    let text = std::fs::read_to_string(&wraps_path)
+        .with_context(|| format!("failed to read {}", wraps_path.display()))?;
+    let wraps: Vec<u64> = serde_json::from_str(&text)
+        .with_context(|| format!("{} is not a JSON array of u64", wraps_path.display()))?;
+    let leaf = proofman::get_vadcop_final_proof_vkey(proving_key, false)
+        .map_err(|e| anyhow::anyhow!("failed to read the vadcop_final key of {}: {e}", proving_key.display()))?;
+    if wraps != leaf {
+        anyhow::bail!(
+            "the SNARK key at {} wraps the vadcop_final key {wraps:?}, but the proving key at {} has \
+             {leaf:?}: it was generated for another proving key. {}",
+            proving_key_snark.display(),
+            proving_key.display(),
+            zisk_setup::REGENERATE_SNARK_KEY
+        );
+    }
+    Ok(())
+}
+
 /// Return an error if `path` does not exist.
 pub fn check_paths_exist(path: &PathBuf) -> Result<()> {
     if !path.exists() {

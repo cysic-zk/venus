@@ -14,7 +14,14 @@ pub const ZISK_SETUP_VERSION: &str = env!("ZISK_SETUP_VERSION");
 pub const REGENERATE_PROVING_KEY: &str = "Generate the proving key with this release, from its \
     repository: `tools/test-env/setup_build.sh --build-dir $HOME/.zisk --gen-exps` writes \
     $HOME/.zisk/provingKey (Node.js 20+ and npm are needed, and the CUDA toolkit for the GPU \
-    kernels; see \"Generating the proving key\" in README.md).";
+    kernels; see \"Generating the proving key\" in README.md). A SNARK key wraps one proving key: \
+    generate it again after it.";
+
+/// How to make the SNARK key of a proving key, for the error that finds one made for another.
+pub const REGENERATE_SNARK_KEY: &str = "Generate it again for this proving key, from this \
+    release's repository: `PTAU_PATH=<ppot_0080_25.ptau> FINAL_SNARK=pilfflonk \
+    tools/test-env/setup_build.sh --build-dir $HOME/.zisk --snark` writes \
+    $HOME/.zisk/provingKeySnark (see \"SNARK wrapper\" in README.md).";
 
 /// Fails unless the key at `proving_key` was built for [`ZISK_SETUP_VERSION`]. A key without
 /// `setupVersion` is rejected too.

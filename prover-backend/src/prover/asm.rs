@@ -1,6 +1,6 @@
 use crate::execute_client::ExecuteClient;
 use crate::{
-    check_paths_exist, ensure_program_vk, get_rom_bin_path,
+    check_paths_exist, check_snark_key, ensure_program_vk, get_rom_bin_path,
     guest::ProgramId,
     prover::{ProverBackend, ProverEngine, ProverJob, ZiskBackend, ZiskProver},
     BackendProverOpts, ExecuteOutput, GuestProgram, ProveOutput, VerifyConstraintsOutput,
@@ -902,6 +902,7 @@ impl AsmCoreProver {
         let mut snark_wrapper = None;
         if use_snark_wrapper {
             check_paths_exist(&proving_key_snark)?;
+            check_snark_key(&proving_key, &proving_key_snark)?;
             let (aux_trace, d_buffers, reload_fixed_pols_gpu) = proofman.get_preallocated_buffers();
             snark_wrapper = Some(SnarkWrapper::new_with_preallocated_buffers(
                 &proving_key_snark,
